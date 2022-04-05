@@ -133,7 +133,7 @@ WERROR   := -Werror=return-type
 endif
 
 CC       := $(CLANGPATH)clang
-CFLAGS   += -std=gnu11 -O3 -Os -Wall -Wextra -Wuninitialized $(WERROR)
+CFLAGS   += -O3 -Os -Wall -Wextra -Wuninitialized $(WERROR)
 
 AS       := $(GCCPATH)arm-none-eabi-gcc
 LD       := $(GCCPATH)arm-none-eabi-gcc
