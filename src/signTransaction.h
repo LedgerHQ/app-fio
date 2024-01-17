@@ -1,44 +1,62 @@
 #ifndef H_FIO_APP_SIGN_TRANSACTION
 #define H_FIO_APP_SIGN_TRANSACTION
 
+#include "diffieHellman.h"
 #include "handlers.h"
 #include "hash.h"
 #include "fio.h"
 #include "keyDerivation.h"
+#include "signTransactionIntegrity.h"
+#include "signTransactionCountedSection.h"
+#include <stdint.h>
 
 handler_fn_t signTransaction_handleAPDU;
 
+#define MAX_DISPLAY_KEY_LENGTH   20
+#define MAX_DISPLAY_VALUE_LENGTH 220
+
+#define MAX_TX_APPEND_IN_SINGLE_APDU 220
+
 typedef struct {
-    sha_256_context_t hashContext;
-    int ui_step;
-    int stage;
+    uint32_t initialized_magic;
 
-    network_type_t network;
-    char actionValidationActor[NAME_STRING_MAX_LENGTH];
+    uint8_t storedValueLen1;
+    uint8_t storedValue1[8];
 
-    // The following data is not needed at once.
-    // to be used in HEADER step
-    uint32_t expiration;
-    uint16_t refBlockNum;
-    uint32_t refBlockPrefix;
+    uint8_t storedValueLen2;
+    uint8_t storedValue2[8];
 
-    // only used in ACTION HEADER step
-    action_type_t action_type;
+    uint8_t storedValueLen3;
+    uint8_t storedValue3[64];
+} tx_value_storage_t;
 
-    // only used in ACTION_AUTHORIZATION step
-    char actionValidationPermission[NAME_STRING_MAX_LENGTH];
-
-    // only used in ACTION_DATA step
-    char *pubkey;
-    uint64_t amount;
-    uint64_t maxFee;
-    char actionDataActor[NAME_STRING_MAX_LENGTH];
-    char *tpid;
-
-    // only used in WITNESS step
+typedef struct {
+    uint16_t initWasCalledMagic;
     bip44_path_t wittnessPath;
-    public_key_t wittnessPathPubkey;
+    sha_256_context_t hashContext;
+    tx_integrity_t integrity;
+    tx_counted_section_t countedSections;
+    tx_value_storage_t storage;
 
+    // This is data before posible DH encoding
+    uint8_t dataToAppendToTxLen;
+    uint8_t dataToAppendToTx[MAX_TX_APPEND_IN_SINGLE_APDU];
+
+    // DH encryption variables
+    uint8_t dhIsActive;
+    uint8_t dhCountedSectionEntryLevel;
+    public_key_t otherPubkey;
+    dh_context_t dhContext;
+    // DH encoding decreases data length, we need to store the difference and add the value to
+    // counted section after we finish DH encoding
+    uint16_t countedSectionDifference;
+
+    int ui_step;
+    uint8_t responseLength;  // Response is in G_io_apdu_buffer
+
+    // Null terminated strings to display
+    char key[MAX_DISPLAY_KEY_LENGTH];
+    char value[MAX_DISPLAY_VALUE_LENGTH];
 } ins_sign_transaction_context_t;
 
 #endif  // H_FIO_APP_SIGN_TRANSACTION

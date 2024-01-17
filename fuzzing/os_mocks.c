@@ -1,6 +1,7 @@
 #include "cx.h"
 
 unsigned char G_io_apdu_buffer[260];
+unsigned int app_stack_canary = 0xDEAD0031;
 
 void os_longjmp(unsigned int exception) {
     longjmp(try_context_get()->jmp_buf, exception);
@@ -112,6 +113,49 @@ cx_err_t cx_ripemd160_init_no_throw(cx_ripemd160_t *hash){
     return CX_OK;
 }
 
+cx_err_t cx_ecdh_no_throw(const cx_ecfp_private_key_t *pvkey,
+                 uint32_t                     mode,
+                 const uint8_t *              P,
+                 size_t                       P_len,
+                 uint8_t *                    secret,
+                 size_t                       secret_len) {
+    return CX_OK;
+}
+
+cx_err_t cx_sha512_init_no_throw(cx_sha512_t *hash) {
+    return CX_OK;
+}
+
+cx_err_t cx_aes_init_key_no_throw(const uint8_t *rawkey, size_t key_len, cx_aes_key_t *key) {
+    return CX_OK;
+}
+
+cx_err_t cx_hmac_update(cx_hmac_t *hmac, const uint8_t *in, size_t in_len) {
+    return CX_OK;
+}
+
+cx_err_t cx_aes_enc_block(const cx_aes_key_t *key, const uint8_t *inblock, uint8_t *outblock) {
+    return CX_OK;
+}
+
+cx_err_t cx_hmac_final(cx_hmac_t *ctx, uint8_t *out, size_t *out_len) {
+    return CX_OK;
+}
+
+cx_err_t cx_aes_dec_block(const cx_aes_key_t *key, const uint8_t *inblock, uint8_t *outblock) {
+    return CX_OK;
+}
+
+void cx_rng_no_throw(uint8_t *buffer, size_t len) {
+}
+
+void handleRunTests(uint8_t p1,
+                    uint8_t p2,
+                    uint8_t *wireBuffer,
+                    size_t wireSize,
+                    bool isNewCall) {
+}
+
 void os_perso_derive_node_bip32 ( cx_curve_t curve, const unsigned int * path, unsigned int pathLength, unsigned char * privateKey, unsigned char * chain ) {}
 
 void ui_idle(void) {}
@@ -151,3 +195,8 @@ bool device_is_unlocked() {
 void *pic(void *link_address) {
     return link_address;
 }
+
+typedef void timeout_callback_fn_t(bool ux_allowed);
+void nanos_set_timer(int ms, timeout_callback_fn_t* cb) {
+}
+

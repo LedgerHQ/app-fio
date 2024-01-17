@@ -4,6 +4,8 @@
 #include "getSerial.h"
 #include "uiHelpers.h"
 
+#define SERIAL_LENGTH 7  // if too short, exception 2 is thrown by os_serial
+
 void getSerial_handleAPDU(uint8_t p1,
                           uint8_t p2,
                           uint8_t *wireDataBuffer MARK_UNUSED,
@@ -18,7 +20,6 @@ void getSerial_handleAPDU(uint8_t p1,
 
     TRACE();
 
-    const size_t SERIAL_LENGTH = 7;  // if too short, exception 2 is thrown by os_serial
     uint8_t response[SERIAL_LENGTH];
     size_t len = os_serial(response, SERIAL_LENGTH);
     ASSERT(len == SERIAL_LENGTH);

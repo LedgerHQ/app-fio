@@ -5,9 +5,9 @@
 
 // Does not compile if x is pointer of some kind
 // See http://zubplot.blogspot.com/2015/01/gcc-is-wonderful-better-arraysize-macro.html
-#define ARRAY_NOT_A_PTR(x)                                                                 \
-    (sizeof(__typeof__(                                                                    \
-         int[1 - 2 * !!__builtin_types_compatible_p(__typeof__(x), __typeof__(&x[0]))])) * \
+#define ARRAY_NOT_A_PTR(x)                                                                \
+    (sizeof(__typeof__(int[1 - 2 * !!__builtin_types_compatible_p(__typeof__(x),          \
+                                                                  __typeof__(&x[0]))])) * \
      0)
 
 // Safe array length, does not compile if you accidentally supply a pointer
@@ -50,6 +50,11 @@
 // Note: unused removes unused warning but does not warn if you suddenly
 // start using such variable. deprecated deals with that.
 #define MARK_UNUSED __attribute__((unused, deprecated))
+#ifdef DEVEL
+#define MARK_UNUSED_NO_DEVEL
+#else
+#define MARK_UNUSED_NO_DEVEL __attribute__((unused, deprecated))
+#endif
 
 // Note: inlining can increase stack memory usage
 // where we really do not want it

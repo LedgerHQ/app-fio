@@ -5,9 +5,16 @@ docs_generated/
 ledger
 bin
 debug
+build
 dep
 obj
 src/u2f_crypto_data.h
 src/glyphs.h
 src/glyphs.c
 .vscode
+output-scan-build
+pkg
+*.log
+*.new.png
+yarn.lock
+null.d

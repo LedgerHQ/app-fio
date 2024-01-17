@@ -26,6 +26,11 @@ __noinline_due_to_stack__ void ui_displayPubkeyScreen(const char* screenHeader,
                                                       const public_key_t* pubkey,
                                                       ui_callback_fn_t callback);
 
+__noinline_due_to_stack__ void ui_displayAsciiBufferScreen(const char* screenHeader,
+                                                           const uint8_t* buffer,
+                                                           size_t bufferSize,
+                                                           ui_callback_fn_t callback);
+
 #ifdef DEVEL
 void run_uiScreens_test();
 #endif  // DEVEL

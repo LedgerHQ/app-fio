@@ -9,17 +9,11 @@
 #define MAX_PUBLIC_KEYS 1000
 
 typedef enum {
-    GET_KEY_STAGE_NONE = 0,
-    GET_KEY_STAGE_INIT = 20,
-} get_key_stage_t;
-
-typedef enum {
     P1_SHOW_PUBKEY = 1,
     P1_DO_NOT_SHOW_PUBKEY = 2,
 } get_key_p1_t;
 
 typedef struct {
-    get_key_stage_t stage;
     get_key_p1_t show_or_not;
 
     bip44_path_t pathSpec;

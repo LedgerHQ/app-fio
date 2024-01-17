@@ -24,6 +24,8 @@ enum {
     ERR_INVALID_STATE = 0x6E06,
     // Some part of request data is invalid (includes not enough data)
     ERR_INVALID_DATA = 0x6E07,
+    // Command sequence not allowed by the device
+    ERR_INTEGRITY_CHECK_FAILED = 0x6E08,
 
     // User rejected the action
     ERR_REJECTED_BY_USER = 0x6E09,
@@ -33,8 +35,8 @@ enum {
     // Pin screen
     ERR_DEVICE_LOCKED = 0x6E11,
 
-    // unsupported Shelley address type
-    ERR_UNSUPPORTED_ADDRESS_TYPE = 0x6E12,
+    // Invalid HMAC in DH decryption
+    ERR_INVALID_HMAC = 0x6E12,
 
     // end of errors which trigger automatic response
     _ERR_AUTORESPOND_END = 0x6E13,

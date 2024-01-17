@@ -21,21 +21,21 @@ The public key and derivation path will be shown either way if the derivation pa
 | Field                             | Length | Comments                           |
 | --------------------------------- | ------ | ---------------------------------- |
 | BIP32 path len                    | 1      | min 2, max 10                      |
-| First derivation index            | 4      | Big endian. Must be 44'            |
-| Second derivation index           | 4      | Big endian. Must be 235'           |
-| (optional) Third derivation index | 4      | Big endian                         |
+| First derivation index            | 4      | Little endian. Must be 44'         |
+| Second derivation index           | 4      | Little endian. Must be 235'        |
+| (optional) Third derivation index | 4      | Little endian                      |
 | ...                               | ...    | ...                                |
-| (optional) Last derivation index  | 4      | Big endian                         |
-| (optional) No. of remaining keys  | 4      | Big endian                         |
+| (optional) Last derivation index  | 4      | Little endian                      |
+| (optional) No. of remaining keys  | 4      | Little endian                      |
 
-Ledger will will process only certain paths, other paths will be rejected by app policy (see Ledger responsibilities section). 
+Ledger will process only certain paths, other paths will be rejected by app policy (see Ledger responsibilities section). 
 
 **Response**
 
-| Field       | Length |
-| ----------- | ------ |
-| pub_key     | 65     |
-| pub_key_WIF | 53     |
+| Field        | Length |
+| ------------ | ------ |
+| pub_key      | 65     |
+| pub_key_hash | 32     |
 
 **Errors (SW codes)**
 
