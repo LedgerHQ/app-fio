@@ -22,50 +22,59 @@ typedef struct {
     cx_sha256_t cx_ctx;
 } sha_256_context_t;
 
-static __attribute__((always_inline, unused)) void sha_256_init(sha_256_context_t* ctx) {
-    cx_sha256_init(&ctx->cx_ctx);
-    ctx->initialized_magic = HASH_CONTEXT_INITIALIZED_MAGIC;
+static __attribute__((always_inline, unused)) cx_err_t sha_256_init(sha_256_context_t* ctx) {
+    cx_err_t err = cx_sha256_init_no_throw(&ctx->cx_ctx);
+    if (err == CX_OK) {
+        ctx->initialized_magic = HASH_CONTEXT_INITIALIZED_MAGIC;
+    }
+    return err;
 }
 
-static __attribute__((always_inline, unused)) void sha_256_append(sha_256_context_t* ctx,
-                                                                  const uint8_t* inBuffer,
-                                                                  size_t inSize) {
-    ASSERT(ctx->initialized_magic == HASH_CONTEXT_INITIALIZED_MAGIC);
+static __attribute__((always_inline, unused)) cx_err_t sha_256_append(sha_256_context_t* ctx,
+                                                                      const uint8_t* inBuffer,
+                                                                      size_t inSize) {
+    if (ctx->initialized_magic != HASH_CONTEXT_INITIALIZED_MAGIC ||
+        inSize >= BUFFER_SIZE_PARANOIA) {
+        return CX_INVALID_PARAMETER;
+    }
     TRACE_BUFFER(inBuffer, inSize);
-    cx_hash(&ctx->cx_ctx.header,
-            0, /* Do not output the hash, yet */
-            inBuffer,
-            inSize,
-            NULL,
-            0);
+    return cx_hash_no_throw(&ctx->cx_ctx.header,
+                            0, /* Do not output the hash, yet */
+                            inBuffer,
+                            inSize,
+                            NULL,
+                            0);
 }
 
-static __attribute__((always_inline, unused)) void sha_256_finalize(sha_256_context_t* ctx,
-                                                                    uint8_t* outBuffer,
-                                                                    size_t outSize) {
-    ASSERT(ctx->initialized_magic == HASH_CONTEXT_INITIALIZED_MAGIC);
-    ASSERT(outSize == SHA_256_SIZE);
-    cx_hash(&ctx->cx_ctx.header,
-            CX_LAST, /* Output the hash */
-            NULL,
-            0,
-            outBuffer,
-            SHA_256_SIZE);
+static __attribute__((always_inline, unused)) cx_err_t sha_256_finalize(sha_256_context_t* ctx,
+                                                                        uint8_t* outBuffer,
+                                                                        size_t outSize) {
+    if (ctx->initialized_magic != HASH_CONTEXT_INITIALIZED_MAGIC || outSize != SHA_256_SIZE) {
+        return CX_INVALID_PARAMETER;
+    }
+    return cx_hash_no_throw(&ctx->cx_ctx.header,
+                            CX_LAST, /* Output the hash */
+                            NULL,
+                            0,
+                            outBuffer,
+                            SHA_256_SIZE);
 }
 
 /* Convenience function to make all in one step */
-static __attribute__((always_inline, unused)) void sha_256_hash(const uint8_t* inBuffer,
-                                                                size_t inSize,
-                                                                uint8_t* outBuffer,
-                                                                size_t outSize) {
-    ASSERT(inSize < BUFFER_SIZE_PARANOIA);
-    ASSERT(outSize == SHA_256_SIZE);
+static __attribute__((always_inline, unused)) cx_err_t sha_256_hash(const uint8_t* inBuffer,
+                                                                    size_t inSize,
+                                                                    uint8_t* outBuffer,
+                                                                    size_t outSize) {
     sha_256_context_t ctx;
-    sha_256_init(&ctx);
-    /* Note: This could be done by single cx_hash call */
-    /* But we don't really care */
-    sha_256_append(&ctx, inBuffer, inSize);
-    sha_256_finalize(&ctx, outBuffer, outSize);
+    cx_err_t err = sha_256_init(&ctx);
+    if (err != CX_OK) {
+        return err;
+    }
+    err = sha_256_append(&ctx, inBuffer, inSize);
+    if (err != CX_OK) {
+        return err;
+    }
+    return sha_256_finalize(&ctx, outBuffer, outSize);
 }
 
 typedef struct {
@@ -73,50 +82,60 @@ typedef struct {
     cx_sha512_t cx_ctx;
 } sha_512_context_t;
 
-static __attribute__((always_inline, unused)) void sha_512_init(sha_512_context_t* ctx) {
-    cx_sha512_init(&ctx->cx_ctx);
-    ctx->initialized_magic = HASH_CONTEXT_INITIALIZED_MAGIC;
+static __attribute__((always_inline, unused)) cx_err_t sha_512_init(sha_512_context_t* ctx) {
+    cx_err_t err = cx_sha512_init_no_throw(&ctx->cx_ctx);
+    if (err == CX_OK) {
+        ctx->initialized_magic = HASH_CONTEXT_INITIALIZED_MAGIC;
+    }
+    return err;
 }
 
-static __attribute__((always_inline, unused)) void sha_512_append(sha_512_context_t* ctx,
-                                                                  const uint8_t* inBuffer,
-                                                                  size_t inSize) {
-    ASSERT(ctx->initialized_magic == HASH_CONTEXT_INITIALIZED_MAGIC);
+static __attribute__((always_inline, unused)) cx_err_t sha_512_append(sha_512_context_t* ctx,
+                                                                      const uint8_t* inBuffer,
+                                                                      size_t inSize) {
+    if (ctx->initialized_magic != HASH_CONTEXT_INITIALIZED_MAGIC ||
+        inSize >= BUFFER_SIZE_PARANOIA) {
+        return CX_INVALID_PARAMETER;
+    }
+
     TRACE_BUFFER(inBuffer, inSize);
-    cx_hash(&ctx->cx_ctx.header,
-            0, /* Do not output the hash, yet */
-            inBuffer,
-            inSize,
-            NULL,
-            0);
+    return cx_hash_no_throw(&ctx->cx_ctx.header,
+                            0, /* Do not output the hash, yet */
+                            inBuffer,
+                            inSize,
+                            NULL,
+                            0);
 }
 
-static __attribute__((always_inline, unused)) void sha_512_finalize(sha_512_context_t* ctx,
-                                                                    uint8_t* outBuffer,
-                                                                    size_t outSize) {
-    ASSERT(ctx->initialized_magic == HASH_CONTEXT_INITIALIZED_MAGIC);
-    ASSERT(outSize == SHA_512_SIZE);
-    cx_hash(&ctx->cx_ctx.header,
-            CX_LAST, /* Output the hash */
-            NULL,
-            0,
-            outBuffer,
-            SHA_512_SIZE);
+static __attribute__((always_inline, unused)) cx_err_t sha_512_finalize(sha_512_context_t* ctx,
+                                                                        uint8_t* outBuffer,
+                                                                        size_t outSize) {
+    if (ctx->initialized_magic != HASH_CONTEXT_INITIALIZED_MAGIC || outSize != SHA_512_SIZE) {
+        return CX_INVALID_PARAMETER;
+    }
+    return cx_hash_no_throw(&ctx->cx_ctx.header,
+                            CX_LAST, /* Output the hash */
+                            NULL,
+                            0,
+                            outBuffer,
+                            SHA_512_SIZE);
 }
 
 /* Convenience function to make all in one step */
-static __attribute__((always_inline, unused)) void sha_512_hash(const uint8_t* inBuffer,
-                                                                size_t inSize,
-                                                                uint8_t* outBuffer,
-                                                                size_t outSize) {
-    ASSERT(inSize < BUFFER_SIZE_PARANOIA);
-    ASSERT(outSize == SHA_512_SIZE);
+static __attribute__((always_inline, unused)) cx_err_t sha_512_hash(const uint8_t* inBuffer,
+                                                                    size_t inSize,
+                                                                    uint8_t* outBuffer,
+                                                                    size_t outSize) {
     sha_512_context_t ctx;
-    sha_512_init(&ctx);
-    /* Note: This could be done by single cx_hash call */
-    /* But we don't really care */
-    sha_512_append(&ctx, inBuffer, inSize);
-    sha_512_finalize(&ctx, outBuffer, outSize);
+    cx_err_t err = sha_512_init(&ctx);
+    if (err != CX_OK) {
+        return err;
+    }
+    err = sha_512_append(&ctx, inBuffer, inSize);
+    if (err != CX_OK) {
+        return err;
+    }
+    return sha_512_finalize(&ctx, outBuffer, outSize);
 }
 
 #endif  // H_FIO_APP_HASH

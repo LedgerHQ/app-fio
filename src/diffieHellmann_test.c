@@ -57,14 +57,16 @@ __noinline_due_to_stack__ static void run_dh_encode_tests() {
         uint8_t msg[50];                                                 \
         size_t msgLen = decode_hex(msgHex, msg, SIZEOF(msg));            \
         uint8_t encMsg[200];                                             \
-        size_t encMsgLength = dh_encode(&pathSpec,                       \
-                                        &publicKey,                      \
-                                        IV,                              \
-                                        DH_AES_IV_SIZE,                  \
-                                        msg,                             \
-                                        msgLen,                          \
-                                        encMsg,                          \
-                                        SIZEOF(encMsg));                 \
+        uint16_t encMsgLength = SIZEOF(encMsg);                          \
+        uint16_t err = dh_encode(&pathSpec,                              \
+                                 &publicKey,                             \
+                                 IV,                                     \
+                                 DH_AES_IV_SIZE,                         \
+                                 msg,                                    \
+                                 msgLen,                                 \
+                                 encMsg,                                 \
+                                 &encMsgLength);                         \
+        ASSERT(err == SUCCESS);                                          \
         TRACE_BUFFER(encMsg, encMsgLength);                              \
         ASSERT(encMsgLength == strlen(expectedEncMsg));                  \
         EXPECT_EQ_BYTES(encMsg, expectedEncMsg, strlen(expectedEncMsg)); \
@@ -132,9 +134,6 @@ __noinline_due_to_stack__ static void run_dh_encode_init_append_finalize_tests()
         const uint8_t IV[DH_AES_IV_SIZE] =
             {100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100};
 
-        dh_aes_key_t key;
-        dh_init_aes_key(&key, &pathSpec, &publicKey);
-
         uint8_t inBuffer[50];
         uint8_t outBuffer[160];
         const char* inBufferHex =
@@ -146,15 +145,16 @@ __noinline_due_to_stack__ static void run_dh_encode_init_append_finalize_tests()
             "llUGwVFl+lJ3Qpxm5u0fLG9kxuEGaN18XnBMEu6iJXmhERjaQhHhN4L/"
             "gZPs9AD9BNvPMXpd9H9EnR27den0hCjQqECg6QE5dZrTnSiZDLN/Yg==";
 
-        size_t outBufferLength = 0;
-        outBufferLength = dh_encode(&pathSpec,
-                                    &publicKey,
-                                    IV,
-                                    DH_AES_IV_SIZE,
-                                    inBuffer,
-                                    inBufferLength,
-                                    outBuffer,
-                                    SIZEOF(outBuffer));
+        uint16_t outBufferLength = SIZEOF(outBuffer);
+        uint16_t err = dh_encode(&pathSpec,
+                                 &publicKey,
+                                 IV,
+                                 DH_AES_IV_SIZE,
+                                 inBuffer,
+                                 inBufferLength,
+                                 outBuffer,
+                                 &outBufferLength);
+        ASSERT(err == SUCCESS);
         TRACE_BUFFER(outBuffer, outBufferLength);
         ASSERT(outBufferLength == strlen(expected));
         EXPECT_EQ_BYTES(expected, outBuffer, outBufferLength);
@@ -165,43 +165,87 @@ __noinline_due_to_stack__ static void run_dh_encode_init_append_finalize_tests()
             TRACE_STACK_USAGE();
             // due to memory limitations we reuse static tx data
             dh_context_t* ctx = &instructionState.signTransactionContext.dhContext;
-            outBufferLength =
-                dh_encode_init(ctx, &key, IV, SIZEOF(IV), outBuffer, SIZEOF(outBuffer));
+            outBufferLength = SIZEOF(outBuffer);
+            err = dh_encode_init(ctx,
+                                 &pathSpec,
+                                 &publicKey,
+                                 IV,
+                                 SIZEOF(IV),
+                                 outBuffer,
+                                 &outBufferLength);
+            ASSERT(err == SUCCESS);
             ASSERT(outBufferLength == 20);
             EXPECT_EQ_BYTES(expected + written, outBuffer, 20);
             written += 20;  // Cache 0b, 1b
 
             {
-                outBufferLength =
-                    dh_encode_append(ctx, &key, inBuffer + read, 1, outBuffer, SIZEOF(outBuffer));
+                outBufferLength = SIZEOF(outBuffer);
+                err = dh_encode_append(ctx,
+                                       &pathSpec,
+                                       &publicKey,
+                                       inBuffer + read,
+                                       1,
+                                       outBuffer,
+                                       &outBufferLength);
+                ASSERT(err == SUCCESS);
                 ASSERT(outBufferLength == 0);
                 read += 1;  // Cache 1b, 1b
             }
             {
-                outBufferLength =
-                    dh_encode_append(ctx, &key, inBuffer + read, 14, outBuffer, SIZEOF(outBuffer));
+                outBufferLength = SIZEOF(outBuffer);
+                err = dh_encode_append(ctx,
+                                       &pathSpec,
+                                       &publicKey,
+                                       inBuffer + read,
+                                       14,
+                                       outBuffer,
+                                       &outBufferLength);
+                ASSERT(err == SUCCESS);
                 ASSERT(outBufferLength == 0);
                 read += 14;  // Cache 15b, 1b
             }
 
-            outBufferLength =
-                dh_encode_append(ctx, &key, inBuffer + read, 18, outBuffer, SIZEOF(outBuffer));
+            outBufferLength = SIZEOF(outBuffer);
+            err = dh_encode_append(ctx,
+                                   &pathSpec,
+                                   &publicKey,
+                                   inBuffer + read,
+                                   18,
+                                   outBuffer,
+                                   &outBufferLength);
+            ASSERT(err == SUCCESS);
             ASSERT(outBufferLength == 44);
             EXPECT_EQ_BYTES(expected + written, outBuffer, 44);
             read += 18, written += 44;  // Cache 1b, 0b
 
-            outBufferLength =
-                dh_encode_append(ctx, &key, inBuffer + read, 1, outBuffer, SIZEOF(outBuffer));
+            outBufferLength = SIZEOF(outBuffer);
+            err = dh_encode_append(ctx,
+                                   &pathSpec,
+                                   &publicKey,
+                                   inBuffer + read,
+                                   1,
+                                   outBuffer,
+                                   &outBufferLength);
+            ASSERT(err == SUCCESS);
             ASSERT(outBufferLength == 0);
             read += 1;  // Cache 2b, 0b
 
-            outBufferLength =
-                dh_encode_append(ctx, &key, inBuffer + read, 14, outBuffer, SIZEOF(outBuffer));
+            outBufferLength = SIZEOF(outBuffer);
+            err = dh_encode_append(ctx,
+                                   &pathSpec,
+                                   &publicKey,
+                                   inBuffer + read,
+                                   14,
+                                   outBuffer,
+                                   &outBufferLength);
+            ASSERT(err == SUCCESS);
             ASSERT(outBufferLength == 20);
             EXPECT_EQ_BYTES(expected + written, outBuffer, 20);
             read += 14, written += 20;  // Cache 0b, 1b
 
-            outBufferLength = dh_encode_finalize(ctx, &key, outBuffer, SIZEOF(outBuffer));
+            outBufferLength = SIZEOF(outBuffer);
+            err = dh_encode_finalize(ctx, &pathSpec, &publicKey, outBuffer, &outBufferLength);
+            ASSERT(err == SUCCESS);
             ASSERT(outBufferLength == 68);
             EXPECT_EQ_BYTES(expected + written, outBuffer, 68);
             written += 68;
@@ -240,15 +284,16 @@ __noinline_due_to_stack__ static void run_dh_decode_tests() {
     {                                                                              \
         const char* msgHex = msgHex_;                                              \
         uint8_t msg[120];                                                          \
-        size_t msgLen = decode_hex(msgHex, msg, SIZEOF(msg));                      \
+        uint16_t msgLen = decode_hex(msgHex, msg, SIZEOF(msg));                    \
         const char* expectedDecMsgHex = expectedDecMsgHex_;                        \
         uint8_t expectedDecMsg[100];                                               \
         size_t expectedMsgLen =                                                    \
             decode_hex(expectedDecMsgHex, expectedDecMsg, SIZEOF(expectedDecMsg)); \
-        size_t decMsgLen = dh_decode(&pathSpec, &publicKey, msg, msgLen);          \
-        TRACE("Decoded mesage %d, %d", decMsgLen, expectedMsgLen);                 \
-        ASSERT(decMsgLen == expectedMsgLen);                                       \
-        EXPECT_EQ_BYTES(msg, expectedDecMsg, decMsgLen);                           \
+        uint16_t err = dh_decode(&pathSpec, &publicKey, msg, &msgLen);             \
+        ASSERT(err == SUCCESS);                                                    \
+        TRACE("Decoded mesage %d, %d", msgLen, expectedMsgLen);                    \
+        ASSERT(msgLen == expectedMsgLen);                                          \
+        EXPECT_EQ_BYTES(msg, expectedDecMsg, msgLen);                              \
     }
         TESTCASE(
             "000102030405060708090a0b0c0d0e0f9508b492f96f067cc72ef8c7c24ac2072310c4e1d36bd6737958f0"
@@ -321,9 +366,9 @@ __noinline_due_to_stack__ static void run_dh_decode_failed_hmac_tests() {
         "05576d60a63b30e52db993fdb53f67ba03cd0abed894f54929ac6addfd7076970597a43a36c525ad1fc4349c69"
         "be21718ab07bc639172663927cb075fa777797e0c1c4";
     uint8_t msg[120];
-    size_t msgLen = decode_hex(msgHex, msg, SIZEOF(msg));
+    uint16_t msgLen = decode_hex(msgHex, msg, SIZEOF(msg));
 
-    EXPECT_THROWS(dh_decode(&pathSpec, &publicKey, msg, msgLen), ERR_INVALID_HMAC);
+    ASSERT(dh_decode(&pathSpec, &publicKey, msg, &msgLen) == ERR_INVALID_HMAC);
 }
 
 __noinline_due_to_stack__ void run_diffieHellman_test() {

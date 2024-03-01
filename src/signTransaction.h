@@ -32,7 +32,7 @@ typedef struct {
 
 typedef struct {
     uint16_t initWasCalledMagic;
-    bip44_path_t wittnessPath;
+    bip44_path_t witnessPath;
     sha_256_context_t hashContext;
     tx_integrity_t integrity;
     tx_counted_section_t countedSections;

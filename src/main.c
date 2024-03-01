@@ -33,12 +33,6 @@
 #include "assert.h"
 #include "io.h"
 
-// The whole app is designed for a specific api level.
-// In case there is an api change, first *verify* changes
-// (especially potential security implications) before bumping
-// the API level!
-STATIC_ASSERT(CX_APILEVEL >= 9, "bad api level");
-
 static const int INS_NONE = -1;
 
 // ui_idle displays the main menu. Note that your app isn't required to use a

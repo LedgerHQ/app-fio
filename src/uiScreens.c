@@ -60,6 +60,7 @@ __noinline_due_to_stack__ void ui_displayPubkeyScreen(const char* screenHeader,
 
     char buffer[MAX_WIF_PUBKEY_LENGTH + 1];
     uint32_t outlen = public_key_to_wif(pubkey->W, SIZEOF(pubkey->W), buffer, SIZEOF(buffer));
+    ASSERT(outlen != 0);
     ASSERT(outlen < MAX_WIF_PUBKEY_LENGTH + 1);
     buffer[outlen] = 0;
 

@@ -51,6 +51,8 @@ static void getPublicKey_ui_runStep() {
                                                SIZEOF(ctx->pubKey.W),
                                                (char*) G_io_apdu_buffer + SIZEOF(ctx->pubKey.W),
                                                MAX_WIF_PUBKEY_LENGTH);
+        ASSERT(wifkeylen != 0);
+        ASSERT(wifkeylen <= BUFFER_SIZE_PARANOIA);
         // we do not copy trailing 0
         io_send_buf(SUCCESS, G_io_apdu_buffer, SIZEOF(ctx->pubKey.W) + wifkeylen - 1);
 
@@ -77,7 +79,10 @@ static void runGetPublicKeyUIFlow() {
 
     {
         // Calculation
-        derivePublicKey(&ctx->pathSpec, &ctx->pubKey);
+        uint16_t err = derivePublicKey(&ctx->pathSpec, &ctx->pubKey);
+        if (err != SUCCESS) {
+            THROW(err);
+        }
         ctx->responseReadyMagic = RESPONSE_READY_MAGIC;
     }
 

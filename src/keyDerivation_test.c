@@ -19,7 +19,10 @@ void testcase_derivePrivateKey(uint32_t* path, uint32_t pathLen, const char* exp
     PRINTF("\n");
 
     private_key_t privateKey;
-    derivePrivateKey(&pathSpec, &privateKey);
+    uint16_t err = derivePrivateKey(&pathSpec, &privateKey);
+    if (err != SUCCESS) {
+        THROW(err);
+    }
     TRACE("%d", SIZEOF(privateKey.d));
     TRACE_BUFFER(privateKey.d, SIZEOF(privateKey.d));
 
@@ -73,7 +76,10 @@ void testcase_derivePublicKey(uint32_t* path, uint32_t pathLen, const char* expe
     PRINTF("\n");
 
     public_key_t publicKey;
-    derivePublicKey(&pathSpec, &publicKey);
+    uint16_t err = derivePublicKey(&pathSpec, &publicKey);
+    if (err != SUCCESS) {
+        THROW(err);
+    }
     TRACE("%d", SIZEOF(publicKey.W));
     TRACE_BUFFER(publicKey.W, SIZEOF(publicKey.W));
 

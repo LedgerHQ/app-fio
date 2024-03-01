@@ -119,4 +119,43 @@ extern unsigned int app_stack_canary;
 #define TRACE_STACK_USAGE()
 #endif  // DEVEL
 
+// In crypto functions we do not want to throw errors, just return them
+// To make this easy we use these macros
+// They expect that the function has
+// uint16_t error_to_return variable
+// end: that contains cleanup
+#define CRYPTO_CX_CHECK(call)             \
+    {                                     \
+        if ((call) != CX_OK) {            \
+            TRACE();                      \
+            error_to_return = ERR_ASSERT; \
+            goto end;                     \
+        }                                 \
+    }
+#define CRYPTO_FORWARD_ERROR(call) \
+    {                              \
+        uint16_t err = (call);     \
+        if (err != SUCCESS) {      \
+            TRACE();               \
+            error_to_return = err; \
+            goto end;              \
+        }                          \
+    }
+#define CRYPTO_ASSERT(condition)          \
+    {                                     \
+        if (!(condition)) {               \
+            TRACE();                      \
+            error_to_return = ERR_ASSERT; \
+            goto end;                     \
+        }                                 \
+    }
+#define CRYPTO_VALIDATE(condition, error) \
+    {                                     \
+        if (!(condition)) {               \
+            TRACE();                      \
+            error_to_return = (error);    \
+            goto end;                     \
+        }                                 \
+    }
+
 #endif  // H_FIO_APP_UTILS

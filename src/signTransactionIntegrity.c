@@ -311,13 +311,15 @@ __noinline_due_to_stack__ void integrityCheckProcessInstruction(tx_integrity_t *
                                                                 uint8_t constDataLength) {
     ASSERT(integrity->initialized_magic == TX_INTEGRITY_HASH_INITIALIZED_MAGIC);
     sha_256_context_t ctx;
-    sha_256_init(&ctx);
-    sha_256_append(&ctx, integrity->integrityHash, SIZEOF(integrity->integrityHash));
-    sha_256_append(&ctx, &p1, SIZEOF(p1));
-    sha_256_append(&ctx, &p2, SIZEOF(p2));
-    sha_256_append(&ctx, &constDataLength, SIZEOF(constDataLength));
-    sha_256_append(&ctx, constData, constDataLength);
-    sha_256_finalize(&ctx, integrity->integrityHash, SIZEOF(integrity->integrityHash));
+    ASSERT(sha_256_init(&ctx) == CX_OK);
+    ASSERT(sha_256_append(&ctx, integrity->integrityHash, SIZEOF(integrity->integrityHash)) ==
+           CX_OK);
+    ASSERT(sha_256_append(&ctx, &p1, SIZEOF(p1)) == CX_OK);
+    ASSERT(sha_256_append(&ctx, &p2, SIZEOF(p2)) == CX_OK);
+    ASSERT(sha_256_append(&ctx, &constDataLength, SIZEOF(constDataLength)) == CX_OK);
+    ASSERT(sha_256_append(&ctx, constData, constDataLength) == CX_OK);
+    ASSERT(sha_256_finalize(&ctx, integrity->integrityHash, SIZEOF(integrity->integrityHash)) ==
+           CX_OK);
 
     TRACE("p1: %02x. p2: %02x, constdata: %.*h", p1, p2, constDataLength, constData);
     TRACE_BUFFER(&integrity->integrityHash, SIZEOF(integrity->integrityHash));

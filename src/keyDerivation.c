@@ -1,66 +1,309 @@
 #include <os_io_seproxyhal.h>
 #include <stdint.h>
-
-#include "assert.h"
 #include "errors.h"
 #include "keyDerivation.h"
 #include "hash.h"
 #include "utils.h"
 #include "fio.h"
 #include "securityPolicy.h"
+#include "eos_utils.h"
 
-#define PRIVATE_KEY_SEED_LEN 32
+#define PRIVATE_KEY_SEED_LEN 64
 
-__noinline_due_to_stack__ void derivePrivateKey(const bip44_path_t* pathSpec,
-                                                private_key_t* privateKey) {
-    ENSURE_NOT_DENIED(policyDerivePrivateKey(pathSpec));
+// This is crypto module, we do not want to jump from it
+// To avoid mistakes, we undef most common macros we do not want to use
+#undef ASSERT
+#undef THROW
+#undef VALIDATE
+
+// Taken from EOS app. Needed to produce signatures.
+static uint8_t const SECP256K1_N[] = {
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xfe,
+    0xba, 0xae, 0xdc, 0xe6, 0xaf, 0x48, 0xa0, 0x3b, 0xbf, 0xd2, 0x5e, 0x8c, 0xd0, 0x36, 0x41, 0x41};
+
+__noinline_due_to_stack__ WARN_UNUSED_RESULT uint16_t derivePrivateKey(const bip44_path_t *pathSpec,
+                                                                       private_key_t *privateKey) {
+    // Crypto assets to be cleared
+    uint8_t privateKeySeed[PRIVATE_KEY_SEED_LEN];
+    explicit_bzero(privateKeySeed, SIZEOF(privateKeySeed));
+    explicit_bzero(privateKey, SIZEOF(*privateKey));
+
+    // Variable for CRYPTO_ error handling macros
+    uint16_t error_to_return = ERR_ASSERT;
+
+    CRYPTO_VALIDATE(policyDerivePrivateKey(pathSpec) != POLICY_DENY, ERR_REJECTED_BY_POLICY);
 
     // Sanity check
-    ASSERT(pathSpec->length < ARRAY_LEN(pathSpec->path));
-
+    CRYPTO_ASSERT(pathSpec->length < ARRAY_LEN(pathSpec->path));
     TRACE();
-    uint8_t privateKeySeed[PRIVATE_KEY_SEED_LEN];
 
-    BEGIN_TRY {
-        TRY {
-            STATIC_ASSERT(CX_APILEVEL >= 5, "unsupported api level");
+    CRYPTO_CX_CHECK(os_derive_bip32_with_seed_no_throw(HDW_NORMAL,
+                                                       CX_CURVE_SECP256K1,
+                                                       pathSpec->path,
+                                                       pathSpec->length,
+                                                       privateKeySeed,
+                                                       NULL,
+                                                       NULL,
+                                                       0));
+    CRYPTO_CX_CHECK(
+        cx_ecfp_init_private_key_no_throw(CX_CURVE_SECP256K1, privateKeySeed, 32, privateKey));
 
-            io_seproxyhal_io_heartbeat();
-            os_perso_derive_node_bip32(CX_CURVE_SECP256K1,
-                                       pathSpec->path,
-                                       pathSpec->length,
-                                       privateKeySeed,
-                                       NULL);
-            io_seproxyhal_io_heartbeat();
-
-            cx_ecfp_init_private_key(CX_CURVE_SECP256K1, privateKeySeed, 32, privateKey);
-        }
-        FINALLY {
-            explicit_bzero(privateKeySeed, SIZEOF(privateKeySeed));
-        }
+    error_to_return = SUCCESS;
+end:
+    if (error_to_return != SUCCESS) {
+        explicit_bzero(privateKey, SIZEOF(*privateKey));
     }
-    END_TRY;
+    explicit_bzero(privateKeySeed, SIZEOF(privateKeySeed));
+    return error_to_return;
 }
 
-__noinline_due_to_stack__ void derivePublicKey(const bip44_path_t* pathSpec,
-                                               public_key_t* publicKey) {
+__noinline_due_to_stack__ WARN_UNUSED_RESULT uint16_t derivePublicKey(const bip44_path_t *pathSpec,
+                                                                      public_key_t *publicKey) {
+    // Crypto assets to be cleared
     private_key_t privateKey;
-    BEGIN_TRY {
-        TRY {
-            derivePrivateKey(pathSpec, &privateKey);
-            // We should do cx_ecfp_generate_pair here, but it does not work in SDK < 1.5.4,
-            // should work with the new SDK
-            io_seproxyhal_io_heartbeat();
-            cx_ecfp_init_public_key(CX_CURVE_SECP256K1, NULL, 0, publicKey);
-            cx_ecfp_generate_pair(CX_CURVE_SECP256K1,
-                                  publicKey,
-                                  &privateKey,
-                                  1);  // 1 - private key preserved
-            io_seproxyhal_io_heartbeat();
+    explicit_bzero(&privateKey, SIZEOF(privateKey));
+
+    // Variable for CRYPTO_ error handling macros
+    uint16_t error_to_return = ERR_ASSERT;
+
+    CRYPTO_FORWARD_ERROR(derivePrivateKey(pathSpec, &privateKey));
+
+    CRYPTO_CX_CHECK(cx_ecfp_init_public_key_no_throw(CX_CURVE_SECP256K1, NULL, 0, publicKey));
+
+    CRYPTO_CX_CHECK(cx_ecfp_generate_pair_no_throw(CX_CURVE_SECP256K1,
+                                                   publicKey,
+                                                   &privateKey,
+                                                   1));  // 1 - private key preserved
+    error_to_return = SUCCESS;
+end:
+    explicit_bzero(&privateKey, SIZEOF(privateKey));
+    return error_to_return;
+}
+
+// EOS way to check if a signature is canonical :/
+static unsigned char check_canonical(uint8_t *rs) {
+    return !(rs[0] & 0x80) && !(rs[0] == 0 && !(rs[1] & 0x80)) && !(rs[32] & 0x80) &&
+           !(rs[32] == 0 && !(rs[33] & 0x80));
+}
+
+static int ecdsa_der_to_sig(const uint8_t *der, uint8_t *sig) {
+    int length = -1;
+    int offset = 2;
+    int delta = 0;
+    if (der[offset + 2] == 0) {
+        length = der[offset + 1] - 1;
+        offset += 3;
+    } else {
+        length = der[offset + 1];
+        offset += 2;
+    }
+    if ((length < 0) || (length > 32)) {
+        return 0;
+    }
+    while ((length + delta) < 32) {
+        sig[delta++] = 0;
+    }
+    memcpy(sig + delta, der + offset, length);
+
+    delta = 0;
+    offset += length;
+    if (der[offset + 2] == 0) {
+        length = der[offset + 1] - 1;
+        offset += 3;
+    } else {
+        length = der[offset + 1];
+        offset += 2;
+    }
+    if ((length < 0) || (length > 32)) {
+        return 0;
+    }
+    while ((length + delta) < 32) {
+        sig[32 + delta++] = 0;
+    }
+    memcpy(sig + 32 + delta, der + offset, length);
+
+    return 1;
+}
+
+/**
+ * The nonce generated by internal library CX_RND_RFC6979 is not compatible
+ * with EOS. So this is the way to generate nonce for EOS.
+ * Arguments (deduced by relatko):
+ * - rnd - out
+ * - h1 - hash, in
+ * - x - private key, in
+ * - x_len - private key length
+ * - q - SECP256K1_N, in
+ * - q_len - 32, in
+ * - V, out
+ * - K, out
+ * This code is taken from EOS app.
+ */
+static uint16_t rng_rfc6979(unsigned char *rnd,
+                            unsigned char *h1,
+                            unsigned char *x,
+                            unsigned int x_len,
+                            const unsigned char *q,
+                            unsigned int q_len,
+                            unsigned char *V,
+                            unsigned char *K) {
+    // Variable for CRYPTO_ error handling macros
+    uint16_t error_to_return = ERR_ASSERT;
+
+    unsigned int h_len, found, i;
+    cx_hmac_sha256_t hmac;
+
+    h_len = 32;
+    // a. h1 as input
+
+    // loop for a candidate
+    found = 0;
+    while (found == 0) {
+        if (x) {
+            // b.  Set:          V = 0x01 0x01 0x01 ... 0x01
+            memset(V, 0x01, h_len);
+            // c. Set: K = 0x00 0x00 0x00 ... 0x00
+            memset(K, 0x00, h_len);
+            // d.  Set: K = HMAC_K(V || 0x00 || int2octets(x) || bits2octets(h1))
+            V[h_len] = 0;
+            CRYPTO_CX_CHECK(cx_hmac_sha256_init_no_throw(&hmac, K, 32));
+            CRYPTO_CX_CHECK(cx_hmac_no_throw((cx_hmac_t *) &hmac, 0, V, h_len + 1, K, 32));
+            CRYPTO_CX_CHECK(cx_hmac_no_throw((cx_hmac_t *) &hmac, 0, x, x_len, K, 32));
+            CRYPTO_CX_CHECK(cx_hmac_no_throw((cx_hmac_t *) &hmac, CX_LAST, h1, h_len, K, 32));
+            // e.  Set: V = HMAC_K(V)
+            CRYPTO_CX_CHECK(cx_hmac_sha256_init_no_throw(&hmac, K, 32));
+            CRYPTO_CX_CHECK(cx_hmac_no_throw((cx_hmac_t *) &hmac, CX_LAST, V, h_len, V, 32));
+            // f.  Set:  K = HMAC_K(V || 0x01 || int2octets(x) || bits2octets(h1))
+            V[h_len] = 1;
+            CRYPTO_CX_CHECK(cx_hmac_sha256_init_no_throw(&hmac, K, 32));
+            CRYPTO_CX_CHECK(cx_hmac_no_throw((cx_hmac_t *) &hmac, 0, V, h_len + 1, K, 32));
+            CRYPTO_CX_CHECK(cx_hmac_no_throw((cx_hmac_t *) &hmac, 0, x, x_len, K, 32));
+            CRYPTO_CX_CHECK(cx_hmac_no_throw((cx_hmac_t *) &hmac, CX_LAST, h1, h_len, K, 32));
+            // g. Set: V = HMAC_K(V) --
+            CRYPTO_CX_CHECK(cx_hmac_sha256_init_no_throw(&hmac, K, 32));
+            CRYPTO_CX_CHECK(cx_hmac_no_throw((cx_hmac_t *) &hmac, CX_LAST, V, h_len, V, 32));
+            // initial setup only once
+            x = NULL;
+        } else {
+            // h.3  K = HMAC_K(V || 0x00)
+            V[h_len] = 0;
+            CRYPTO_CX_CHECK(cx_hmac_sha256_init_no_throw(&hmac, K, 32));
+            CRYPTO_CX_CHECK(cx_hmac_no_throw((cx_hmac_t *) &hmac, CX_LAST, V, h_len + 1, K, 32));
+            // h.3 V = HMAC_K(V)
+            CRYPTO_CX_CHECK(cx_hmac_sha256_init_no_throw(&hmac, K, 32));
+            CRYPTO_CX_CHECK(cx_hmac_no_throw((cx_hmac_t *) &hmac, CX_LAST, V, h_len, V, 32));
         }
-        FINALLY {
-            explicit_bzero(&privateKey, SIZEOF(privateKey));
+
+        // generate candidate
+        /* Shortcut: As only secp256k1/sha256 is supported, the step h.2 :
+         *   While tlen < qlen, do the following:
+         *     V = HMAC_K(V)
+         *     T = T || V
+         * is replace by
+         *     V = HMAC_K(V)
+         */
+        x_len = q_len;
+        while (x_len) {
+            if (x_len < h_len) {
+                h_len = x_len;
+            }
+            CRYPTO_CX_CHECK(cx_hmac_sha256_init_no_throw(&hmac, K, 32));
+            CRYPTO_CX_CHECK(cx_hmac_no_throw((cx_hmac_t *) &hmac, CX_LAST, V, h_len, V, 32));
+            memcpy(rnd, V, h_len);
+            x_len -= h_len;
+        }
+
+        // h.3 Check T is < n
+        for (i = 0; i < q_len; i++) {
+            if (V[i] < q[i]) {
+                found = 1;
+                break;
+            }
         }
     }
-    END_TRY;
+
+    error_to_return = SUCCESS;
+end:
+    return error_to_return;
+}
+
+// This function contains code producing signatures that is taken from EOS app
+// To be sure that the functionality is unchanged, constants are left as they were
+__noinline_due_to_stack__ WARN_UNUSED_RESULT uint16_t signTransaction(bip44_path_t *witnessPath,
+                                                                      uint8_t hashBuf[SHA_256_SIZE],
+                                                                      uint8_t *signature,
+                                                                      size_t signatureLen) {
+    // Crypto assets to be cleared
+    private_key_t privateKey;
+    uint8_t V[33];
+    uint8_t K[32];
+    explicit_bzero(&privateKey, SIZEOF(privateKey));
+    explicit_bzero(V, SIZEOF(V));
+    explicit_bzero(K, SIZEOF(K));
+    explicit_bzero(signature, signatureLen);
+
+    // Variable for CRYPTO_ error handling macros
+    uint16_t error_to_return = ERR_ASSERT;
+
+    CRYPTO_ASSERT(signatureLen >= 200);
+
+    CRYPTO_FORWARD_ERROR(derivePrivateKey(witnessPath, &privateKey));
+    TRACE("privateKey.d:");
+    TRACE_BUFFER(privateKey.d, privateKey.d_len);
+
+    // We sign the hash
+    int tries = 0;
+    // Loop until a candidate matching the canonical signature is found
+    for (;;) {
+        if (tries == 0) {
+            CRYPTO_FORWARD_ERROR(rng_rfc6979(signature + 100,
+                                             hashBuf,
+                                             privateKey.d,
+                                             privateKey.d_len,
+                                             SECP256K1_N,
+                                             32,
+                                             V,
+                                             K));
+        } else {
+            CRYPTO_FORWARD_ERROR(
+                rng_rfc6979(signature + 100, hashBuf, NULL, 0, SECP256K1_N, 32, V, K));
+        }
+        uint32_t infos;
+
+        size_t sig_len_ = 100;
+        CRYPTO_CX_CHECK(cx_ecdsa_sign_no_throw(&privateKey,
+                                               CX_NO_CANONICAL | CX_RND_PROVIDED | CX_LAST,
+                                               CX_SHA256,
+                                               hashBuf,
+                                               32,
+                                               signature + 100,
+                                               &sig_len_,
+                                               &infos));
+        TRACE_BUFFER(signature + 100, 100);
+
+        if ((infos & CX_ECCINFO_PARITY_ODD) != 0) {
+            signature[100] |= 0x01;
+        }
+        signature[0] = 27 + 4 + (signature[100] & 0x01);
+        ecdsa_der_to_sig(signature + 100, signature + 1);
+        TRACE_BUFFER(signature, PUBKEY_LENGTH);
+
+        if (check_canonical(signature + 1)) {
+            TRACE("Try %d succesfull!", tries);
+            break;
+        } else {
+            TRACE("Try %d unsuccesfull!", tries);
+            tries++;
+        }
+    }
+
+    error_to_return = SUCCESS;
+end:
+    if (error_to_return != SUCCESS) {
+        explicit_bzero(signature, signatureLen);
+    }
+    explicit_bzero(&privateKey, sizeof(privateKey));
+    explicit_bzero(V, SIZEOF(V));
+    explicit_bzero(K, SIZEOF(K));
+    return error_to_return;
 }

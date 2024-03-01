@@ -8,7 +8,7 @@ const fioWaitingForCommandsSHA = {
 
 const fioWarningDevelSHA = {
     "nanos": "sha256:df7553b0b614d9d3ff0dcb5facde9e1e7e308e2691be9669d206a241f958a999",
-    "nanox": "sha256:2bb665c41bcb7e7abda8fc30255f28b35144d26997f314074290eb24b23e37fa", 
+    "nanox": "sha256:bc21ced95ca0a8fcea97428b4a840c35db373ed2b6c67654b5de66b330e466f9", 
     "nanosp": "sha256:2bb665c41bcb7e7abda8fc30255f28b35144d26997f314074290eb24b23e37fa",
 } 
 

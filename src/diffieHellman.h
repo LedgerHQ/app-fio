@@ -39,63 +39,146 @@ typedef struct {
 
 // Aes key is secret shared between us and the second party
 typedef struct {
-    uint16_t initialized_magic;
     cx_aes_key_t aesKey;
     uint8_t km[DH_KM_SIZE];
 } dh_aes_key_t;
 
-// You may need to call multiple times if encryption spans multiple APDU's
-// You may want to do something like
-// APDU1 - dh_init_aes_key, dh_encode_init, dh_encode_append
-// APDU2 - dh_init_aes_key, dh_encode_append
-// APDU3 - dh_init_aes_key, dh_encode_append, dh_encode_finalize
-// Do not forget to guarantee that dh_aes_key_t is zeroes at all times
+/**
+ * @brief   Generates shared secret AES key. Use only in crypto functions to guarantee cleanup.
+ *
+ * @param[out] dhKey           Resulting AES key.
+ *
+ * @param[in]  pathSpec        Our derivation path.
+ *
+ * @param[in]  publicKey       Their public key.
+ *
+ * @return                     Error code:
+ *                             - SUCCESS on success
+ *                             - ERR_REJECTED_BY_POLICY
+ *                             - ERR_ASSERT for other unexpected errors
+ */
+__noinline_due_to_stack__ WARN_UNUSED_RESULT uint16_t
+dh_init_aes_key(dh_aes_key_t *dhKey, const bip44_path_t *pathSpec, const public_key_t *publicKey);
 
-__noinline_due_to_stack__ void dh_init_aes_key(dh_aes_key_t* dhKey,
-                                               const bip44_path_t* pathSpec,
-                                               const public_key_t* publicKey);
+/**
+ * @brief   Initiates DH+Base64 ecoding.
+ *
+ * @param[out]     ctx             DH encoding context.
+ *
+ * @param[in]      pathSpec        Our derivation path.
+ *
+ * @param[in]      publicKey       Their public key.
+ *
+ * @param[in]      iv              Initiatlization vector.
+ *
+ * @param[in]      ivSize          Size of initialization vector.
+ *
+ * @param[out]     outBuffer       Output buffer, initialization produces cyphertext.
+ *
+ * @param[in, out] outSize        Size of output buffer. returns the number of new bytes.
+ *
+ * @return                     Error code:
+ *                             - SUCCESS on success
+ *                             - ERR_REJECTED_BY_POLICY
+ *                             - ERR_ASSERT for other unexpected errors
+ */
+__noinline_due_to_stack__ WARN_UNUSED_RESULT uint16_t dh_encode_init(dh_context_t *ctx,
+                                                                     const bip44_path_t *pathSpec,
+                                                                     const public_key_t *publicKey,
+                                                                     const uint8_t *iv,
+                                                                     uint16_t ivSize,
+                                                                     uint8_t *outBuffer,
+                                                                     uint16_t *outSize);
 
-// Output data are base64 encrypted
-__noinline_due_to_stack__ size_t dh_encode_init(dh_context_t* ctx,
-                                                const dh_aes_key_t* aes_key,
-                                                const uint8_t* iv,
-                                                size_t ivSize,
-                                                uint8_t* outBuffer,
-                                                size_t outSize);
+/**
+ * @brief   Append to DH+Base64 ecoded data.
+ *
+ * @param[in, out] ctx             DH encoding context.
+ *
+ * @param[in]      pathSpec        Our derivation path.
+ *
+ * @param[in]      publicKey       Their public key.
+ *
+ * @param[in]      inBuffer        Input buffer.
+ *
+ * @param[in]      inSize          Input buffer size.
+ *
+ * @param[out]     outBuffer       Output buffer, initialization produces cyphertext.
+ *
+ * @param[in, out] outSize        Size of output buffer. returns the number of new bytes.
+ *
+ * @return                         Error code:
+ *                                 - SUCCESS on success
+ *                                 - ERR_REJECTED_BY_POLICY
+ *                                 - ERR_ASSERT for other unexpected errors
+ */
+__noinline_due_to_stack__ WARN_UNUSED_RESULT uint16_t
+dh_encode_append(dh_context_t *ctx,
+                 const bip44_path_t *pathSpec,
+                 const public_key_t *publicKey,
+                 const uint8_t *inBuffer,
+                 uint16_t inSize,
+                 uint8_t *outBuffer,
+                 uint16_t *outSize);
 
-// Output data are base64 encrypted
-__noinline_due_to_stack__ size_t dh_encode_append(dh_context_t* ctx,
-                                                  const dh_aes_key_t* aes_key,
-                                                  const uint8_t* inBuffer,
-                                                  size_t inSize,
-                                                  uint8_t* outBuffer,
-                                                  size_t outSize);
+/**
+ * @brief   Finish DH+Base64 encoding.
+ *
+ * @param[in]      ctx             DH encoding context.
+ *
+ * @param[in]      pathSpec        Our derivation path.
+ *
+ * @param[in]      publicKey       Their public key.
+ *
+ * @param[out]     outBuffer       Output buffer, initialization produces cyphertext.
+ *
+ * @param[in, out] outSize         Size of output buffer. returns the number of new bytes.
+ *
+ * @return                         Error code:
+ *                                 - SUCCESS on success
+ *                                 - ERR_REJECTED_BY_POLICY
+ *                                 - ERR_ASSERT for other unexpected errors
+ */
+__noinline_due_to_stack__ WARN_UNUSED_RESULT uint16_t
+dh_encode_finalize(dh_context_t *ctx,
+                   const bip44_path_t *pathSpec,
+                   const public_key_t *publicKey,
+                   uint8_t *outBuffer,
+                   uint16_t *outSize);
 
-// Output data are base64 encrypted
-__noinline_due_to_stack__ size_t dh_encode_finalize(dh_context_t* ctx,
-                                                    const dh_aes_key_t* aes_key,
-                                                    uint8_t* outBuffer,
-                                                    size_t outSize);
-
-// Convenience function to make all in one step
-// Output data are base64 encrypted
-__noinline_due_to_stack__ size_t dh_encode(bip44_path_t* pathSpec,
-                                           public_key_t* publicKey,
-                                           const uint8_t* iv,
-                                           size_t ivSize,
-                                           const uint8_t* inBuffer,
-                                           size_t inSize,
-                                           uint8_t* outBuffer,
-                                           size_t outSize);
-
-// Inplace decoding function.
-// Input data is NOT base64 encrypted
-__noinline_due_to_stack__ size_t dh_decode(bip44_path_t* pathSpec,
-                                           public_key_t* publicKey,
-                                           uint8_t* buffer,
-                                           size_t inSize);
+/**
+ * @brief   Inplace DH decoding function. Input data is NOT base64 encrypted
+ *
+ * @param[in]      pathSpec        Our derivation path.
+ *
+ * @param[in]      publicKey       Their public key.
+ *
+ * @param[out]     buffer          Output buffer, initialization produces cyphertext.
+ *
+ * @param[in, out] size            Size of output buffer. returns the number of new bytes.
+ *
+ * @return                         Error code:
+ *                                 - SUCCESS on success
+ *                                 - ERR_REJECTED_BY_POLICY
+ *                                 - ERR_INVALID_DATA
+ *                                 - ERR_INVALID_HMAC
+ *                                 - ERR_ASSERT for other unexpected errors
+ */
+__noinline_due_to_stack__ WARN_UNUSED_RESULT uint16_t dh_decode(bip44_path_t *pathSpec,
+                                                                public_key_t *publicKey,
+                                                                uint8_t *buffer,
+                                                                uint16_t *size);
 
 #ifdef DEVEL
+__noinline_due_to_stack__ WARN_UNUSED_RESULT uint16_t dh_encode(bip44_path_t *pathSpec,
+                                                                public_key_t *publicKey,
+                                                                const uint8_t *iv,
+                                                                uint16_t ivSize,
+                                                                const uint8_t *inBuffer,
+                                                                uint16_t inSize,
+                                                                uint8_t *outBuffer,
+                                                                uint16_t *outSize);
+
 __noinline_due_to_stack__ void run_diffieHellman_test();
 #endif  // DEVEL
 
