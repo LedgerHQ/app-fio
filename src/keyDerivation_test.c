@@ -45,11 +45,9 @@ void testPrivateKeyDerivation() {
     // about"?
 
     TESTCASE((HD + 44, HD + 235, HD + 0, 0, 0),
-
              "4d597899db76e87933e7c6841c2d661810f070bad20487ef20eb84e182695a3a");
 
     TESTCASE((HD + 44, HD + 235, HD + 0, 0, 2000),
-
              "0762d870ba3a00625d02c8374dbcd33f1df4d8f1abbaa89387ab5c8afa533d90");
 #undef TESTCASE
 
@@ -105,7 +103,7 @@ void testPublicKeyDerivation() {
 #undef TESTCASE
 }
 
-void run_key_derivation_test() {
+__noinline_due_to_stack__ void run_key_derivation_test() {
     PRINTF("Running key derivation tests\n");
     PRINTF("If they fail, make sure you seeded your device with\n");
     PRINTF("12-word mnemonic: 11*abandon about\n");

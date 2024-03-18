@@ -79,7 +79,7 @@ void name_to_string(name_t value, char *out, size_t size) {
 }
 
 // Wrapper
-void uint8array_name_to_string(uint8_t *value, size_t valueSize, char *out, size_t outSize) {
+void uint8array_name_to_string(const uint8_t *value, size_t valueSize, char *out, size_t outSize) {
     ASSERT(valueSize == NAME_VAR_LENGTH);
     name_t tmp;
     ASSERT(sizeof(tmp) >= valueSize);

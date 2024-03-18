@@ -75,7 +75,6 @@ static void fio_main(void) {
     volatile size_t rx = 0;
     volatile size_t tx = 0;
     volatile uint8_t flags = 0;
-    unsigned int _rx;
 
     // Exchange APDUs until EXCEPTION_IO_RESET is thrown.
     for (;;) {
@@ -91,9 +90,8 @@ static void fio_main(void) {
             TRY {
                 rx = tx;
                 tx = 0;  // ensure no race in CATCH_OTHER if io_exchange throws an error
-                _rx = rx;
-                ASSERT(_rx < sizeof(G_io_apdu_buffer));
-                rx = (unsigned int) io_exchange((uint8_t)(CHANNEL_APDU | flags), (uint16_t) rx);
+                ASSERT((unsigned int) rx < sizeof(G_io_apdu_buffer));
+                rx = (unsigned int) io_exchange((uint8_t) (CHANNEL_APDU | flags), (uint16_t) rx);
                 flags = 0;
 
                 // We should be awaiting APDU
@@ -155,6 +153,7 @@ static void fio_main(void) {
 // Note(ppershing): assertions should not auto-respond
 #ifdef RESET_ON_CRASH
                 // Reset device
+                currentInstruction = INS_NONE;
                 io_seproxyhal_se_reset();
 #endif
             }
@@ -167,6 +166,7 @@ static void fio_main(void) {
                     PRINTF("Uncaught error 0x%x", (unsigned) e);
 #ifdef RESET_ON_CRASH
                     // Reset device
+                    currentInstruction = INS_NONE;
                     io_seproxyhal_se_reset();
 #endif
                 }
@@ -187,6 +187,7 @@ static void fio_main(void) {
 static void app_exit(void) {
     BEGIN_TRY_L(exit) {
         TRY_L(exit) {
+            currentInstruction = INS_NONE;
             os_sched_exit(-1);
         }
         FINALLY_L(exit) {

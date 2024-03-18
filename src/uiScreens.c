@@ -40,7 +40,7 @@ __noinline_due_to_stack__ void ui_displayHexBufferScreen(const char* screenHeade
     ASSERT(strlen(screenHeader) > 0);
     ASSERT(strlen(screenHeader) < BUFFER_SIZE_PARANOIA);
     ASSERT(bufferSize > 0);
-    ASSERT(bufferSize <= 65);  // this is used for hashes, and pubkeys, they are all smaller
+    ASSERT(bufferSize <= PUBKEY_LENGTH);  // This is the longest thing we plan to display
 
     char bufferHex[2 * 65 + 1];
     explicit_bzero(bufferHex, SIZEOF(bufferHex));
@@ -64,4 +64,21 @@ __noinline_due_to_stack__ void ui_displayPubkeyScreen(const char* screenHeader,
     buffer[outlen] = 0;
 
     ui_displayPaginatedText(screenHeader, buffer, callback);
+}
+
+__noinline_due_to_stack__ void ui_displayAsciiBufferScreen(const char* screenHeader,
+                                                           const uint8_t* buffer,
+                                                           size_t bufferSize,
+                                                           ui_callback_fn_t callback) {
+    str_validateTextBuffer(buffer, bufferSize);
+    ASSERT(strlen(screenHeader) > 0);
+    ASSERT(strlen(screenHeader) < BUFFER_SIZE_PARANOIA);
+    ASSERT(bufferSize > 0);
+    char buffer2[200];
+    ASSERT(bufferSize < SIZEOF(buffer2));
+    explicit_bzero(buffer2, SIZEOF(buffer2));
+    memcpy(buffer2, buffer, bufferSize);
+    buffer2[bufferSize] = 0;
+
+    ui_displayPaginatedText(screenHeader, buffer2, callback);
 }

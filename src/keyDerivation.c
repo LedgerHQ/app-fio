@@ -6,13 +6,13 @@
 #include "keyDerivation.h"
 #include "hash.h"
 #include "utils.h"
-#include "endian.h"
 #include "fio.h"
 #include "securityPolicy.h"
 
 #define PRIVATE_KEY_SEED_LEN 32
 
-void derivePrivateKey(const bip44_path_t* pathSpec, private_key_t* privateKey) {
+__noinline_due_to_stack__ void derivePrivateKey(const bip44_path_t* pathSpec,
+                                                private_key_t* privateKey) {
     ENSURE_NOT_DENIED(policyDerivePrivateKey(pathSpec));
 
     // Sanity check
@@ -42,7 +42,8 @@ void derivePrivateKey(const bip44_path_t* pathSpec, private_key_t* privateKey) {
     END_TRY;
 }
 
-void derivePublicKey(const bip44_path_t* pathSpec, public_key_t* publicKey) {
+__noinline_due_to_stack__ void derivePublicKey(const bip44_path_t* pathSpec,
+                                               public_key_t* publicKey) {
     private_key_t privateKey;
     BEGIN_TRY {
         TRY {

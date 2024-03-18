@@ -187,8 +187,6 @@ void ui_displayPaginatedText(const char* headerStr,
 
     uiCallback_init(&ctx->callback, callback, NULL);
     ctx->initMagic = INIT_MAGIC_PAGINATED_TEXT;
-    TRACE("setting timeout");
-    TRACE("done");
     ASSERT(io_state == IO_EXPECT_NONE || io_state == IO_EXPECT_UI);
     io_state = IO_EXPECT_UI;
 
@@ -202,6 +200,7 @@ void ui_displayPaginatedText(const char* headerStr,
 }
 
 void respond_with_user_reject() {
+    explicit_bzero(G_io_apdu_buffer, SIZEOF(G_io_apdu_buffer));
     io_send_buf(ERR_REJECTED_BY_USER, NULL, 0);
     ui_idle();
 }

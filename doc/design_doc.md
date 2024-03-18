@@ -37,7 +37,7 @@ Generally the response from the app looks like this:
 |**size (B)**| variable | 1 | 1 |
 
 where `SW1 SW2` represents the return code.
-Known error codes are:
+Error codes are:
 - 0x9000 = OK
 - see [src/errors.h](../src/errors.h) for the full listing of other errors
 
@@ -62,7 +62,13 @@ Instructions related to public keys/addresses
 
 Instructions related to transaction signing
 
-- `0x21` [Sign Transaction](ins_sign_tx.md)
+- `0x20` [Sign Transaction](ins_sign_tx.md)
+
+### `INS=0x3*` group
+
+Instructions related to DH decryption
+
+- `0x30` [Decrypt shared secret](ins_decrypt.md)
 
 ### `INS=0xF*` group
 
@@ -74,4 +80,4 @@ Instructions related to debug mode of the app. These instructions *must not* be 
 
 In order to ensure safe forward compatibility, sender *must* set any *unused* field to zero. When upgrading protocol, any unused field that is no longer unused *must* define only values != 0. This will ensure that clients using old protocol will receive errors instead of an unexpected behavior.
 
-❓(VL): Do we want to force clients to check app version (mis)match, e.g. by having an explicit handshake? A custom (non `ledgerjs`-based) client app might omit version checks which might lead to potential problems
+

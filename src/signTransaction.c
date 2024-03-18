@@ -1,718 +1,971 @@
 #include "common.h"
 #include "handlers.h"
-
+#include "eos_utils.h"
 #include "getSerial.h"
 #include "state.h"
+#include "fio.h"
 #include "hash.h"
-#include "endian.h"
-#include "eos_utils.h"
+#include "lcx_rng.h"
 #include "securityPolicy.h"
+#include "signTransactionCountedSection.h"
+#include "signTransactionIntegrity.h"
+#include "signTransactionParse.h"
 #include "uiHelpers.h"
 #include "uiScreens.h"
 #include "textUtils.h"
 
 static ins_sign_transaction_context_t* ctx = &(instructionState.signTransactionContext);
 
+// ============================== MISC ==============================
+
 typedef enum {
-    SIGN_STAGE_NONE = 0,
-    SIGN_STAGE_INIT = 23,
-    SIGN_STAGE_HEADER = 24,
-    SIGN_STAGE_ACTION_HEADER = 25,
-    SIGN_STAGE_ACTION_AUTHORIZATION = 26,
-    SIGN_STAGE_ACTION_DATA = 27,
-    SIGN_STAGE_WITNESS = 28,
-} sign_tx_stage_t;
+    VALUE_STORAGE_CHECK_NO = 0x00,
+    VALUE_STORAGE_CHECK_R1 = 0x10,
+    VALUE_STORAGE_CHECK_R2 = 0x20,
+    VALUE_STORAGE_CHECK_R3 = 0x30,
+    VALUE_STORAGE_CHECK_R1_DECODE_NAME = 0x40,
+} tx_storage_check_t;
 
-// this is supposed to be called at the beginning of each APDU handler
-static inline void CHECK_STAGE(sign_tx_stage_t expected) {
-    VALIDATE(ctx->stage == expected, ERR_INVALID_STATE);
-}
-
-// advances the stage of the main state machine
-static inline void advanceStage() {
-    TRACE("Advancing sign tx stage from: %d", ctx->stage);
-
-    switch (ctx->stage) {
-        case SIGN_STAGE_INIT:
-            ctx->stage = SIGN_STAGE_HEADER;
-            break;
-
-        case SIGN_STAGE_HEADER:
-            ctx->stage = SIGN_STAGE_ACTION_HEADER;
-            break;
-
-        case SIGN_STAGE_ACTION_HEADER:
-            ctx->stage = SIGN_STAGE_ACTION_AUTHORIZATION;
-            break;
-
-        case SIGN_STAGE_ACTION_AUTHORIZATION:
-            ctx->stage = SIGN_STAGE_ACTION_DATA;
-            break;
-
-        case SIGN_STAGE_ACTION_DATA:
-            ctx->stage = SIGN_STAGE_WITNESS;
-            break;
-
-        case SIGN_STAGE_WITNESS:
-            ctx->stage = SIGN_STAGE_NONE;
-            ui_idle();  // we are done with this tx
-            break;
-
-        case SIGN_STAGE_NONE:
-            // advanceStage() not supposed to be called after tx processing is finished
-            ASSERT(false);
-        default:
-            ASSERT(false);
-    }
-
-    TRACE("Advancing sign tx stage to: %d", ctx->stage);
-}
-
-void respondSuccessEmptyMsg() {
-    TRACE();
-    io_send_buf(SUCCESS, NULL, 0);
-    ui_displayBusy();  // needs to happen after I/O
-}
-
-// Taken from EOS app. Needed to produce signatures.
-uint8_t const SECP256K1_N[] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-                               0xff, 0xff, 0xff, 0xff, 0xfe, 0xba, 0xae, 0xdc, 0xe6, 0xaf, 0x48,
-                               0xa0, 0x3b, 0xbf, 0xd2, 0x5e, 0x8c, 0xd0, 0x36, 0x41, 0x41};
-
-// ============================== INIT ==============================
 enum {
-    HANDLE_INIT_STEP_DISPLAY_DETAILS = 100,
-    HANDLE_INIT_STEP_RESPOND,
-    HANDLE_INIT_STEP_INVALID,
+    TX_STORAGE_INITIALIZED_MAGIC = 12345,
 };
 
-static void signTx_handleInit_ui_runStep() {
+enum {
+    TX_INIT_WAS_CALLED_INITIALIZED_MAGIC = 12346,
+};
+
+// Taken from EOS app. Needed to produce signatures.
+static uint8_t const SECP256K1_N[] = {
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xfe,
+    0xba, 0xae, 0xdc, 0xe6, 0xaf, 0x48, 0xa0, 0x3b, 0xbf, 0xd2, 0x5e, 0x8c, 0xd0, 0x36, 0x41, 0x41};
+
+// Uses ctx->dataToAppendToTx, ctx->dataToAppendToTxLen to extend hash
+// If ctx->dhIsActive then, we extend hash with encrypted data and prepare resulting encrypted
+// blocks to G_io_apdu_buffer, ctx->responseLength Variables (&ctx->wittnessPath, &ctx->otherPubkey,
+// &ctx->dhContext) are needed for encryption
+static void processShaAndPosibleDHAndPrepareResponse() {
+    if (ctx->dhIsActive) {
+        dh_aes_key_t aesKey;
+        BEGIN_TRY {
+            TRY {
+                // Compute AES key
+                dh_init_aes_key(&aesKey, &ctx->wittnessPath, &ctx->otherPubkey);
+
+                // Encode message chunk
+                ctx->responseLength = dh_encode_append(&ctx->dhContext,
+                                                       &aesKey,
+                                                       ctx->dataToAppendToTx,
+                                                       ctx->dataToAppendToTxLen,
+                                                       G_io_apdu_buffer,
+                                                       SIZEOF(G_io_apdu_buffer));
+                sha_256_append(&ctx->hashContext, G_io_apdu_buffer, ctx->responseLength);
+                VALIDATE(
+                    ctx->countedSectionDifference + ctx->responseLength >= ctx->dataToAppendToTxLen,
+                    ERR_INVALID_STATE);
+                ctx->countedSectionDifference =
+                    ctx->countedSectionDifference + ctx->responseLength - ctx->dataToAppendToTxLen;
+                TRACE("CS diff %d from:%d, %d",
+                      (int) ctx->countedSectionDifference,
+                      (int) ctx->responseLength,
+                      (int) ctx->dataToAppendToTxLen);
+            }
+            FINALLY {
+                explicit_bzero(&aesKey, SIZEOF(aesKey));
+            }
+        }
+        END_TRY;
+    } else {
+        sha_256_append(&ctx->hashContext, ctx->dataToAppendToTx, ctx->dataToAppendToTxLen);
+        ctx->responseLength = 0;
+    }
+}
+
+// Takes &ctx->wittnessPath and modifies ctx->value to be null terminated scting to display the
+// pubkey
+static void prepareOurPubkeyForDisplay() {
+    public_key_t wittnessPathPubkey;
+    explicit_bzero(&wittnessPathPubkey, SIZEOF(wittnessPathPubkey));
+    derivePublicKey(&ctx->wittnessPath, &wittnessPathPubkey);
+    TRACE_BUFFER(wittnessPathPubkey.W, SIZEOF(wittnessPathPubkey.W));
+
+    uint32_t outlen = public_key_to_wif(wittnessPathPubkey.W,
+                                        SIZEOF(wittnessPathPubkey.W),
+                                        ctx->value,
+                                        SIZEOF(ctx->value));
+    ASSERT(outlen < SIZEOF(ctx->value));
+    ctx->value[outlen] = 0;
+}
+
+// Simple reusable UI step with one or no screens
+enum {
+    HANDLE_SIMPLE_STEP_DISPLAY_DETAILS = 100,
+    HANDLE_SIMPLE_STEP_RESPOND,
+    HANDLE_SIMPLE_STEP_INVALID,
+};
+
+static void signTx_ui_runStep_simple() {
     TRACE("UI step %d", ctx->ui_step);
     TRACE_STACK_USAGE();
-    ui_callback_fn_t* this_fn = signTx_handleInit_ui_runStep;
+    ui_callback_fn_t* this_fn = signTx_ui_runStep_simple;
 
     UI_STEP_BEGIN(ctx->ui_step, this_fn);
 
-    UI_STEP(HANDLE_INIT_STEP_DISPLAY_DETAILS) {
-        switch (ctx->network) {
-#define CASE(NETWORK, CHAIN_STRING)                              \
-    case NETWORK: {                                              \
-        ui_displayPaginatedText("Chain", CHAIN_STRING, this_fn); \
-        break;                                                   \
+    UI_STEP(HANDLE_SIMPLE_STEP_DISPLAY_DETAILS) {
+        ui_displayPaginatedText(ctx->key, ctx->value, this_fn);
+    }
+
+    UI_STEP(HANDLE_SIMPLE_STEP_RESPOND) {
+        TRACE();
+        io_send_buf(SUCCESS, G_io_apdu_buffer, ctx->responseLength);
+        ui_displayBusy();  // needs to happen after I/O
+    }
+
+    UI_STEP_END(HANDLE_SIMPLE_STEP_INVALID);
+}
+
+// ============================== INIT ==============================
+
+__noinline_due_to_stack__ void signTx_handleInitAPDU(uint8_t p2,
+                                                     MARK_UNUSED_NO_DEVEL uint8_t* constDataBuffer,
+                                                     size_t constSize,
+                                                     uint8_t* varDataBuffer,
+                                                     size_t varSize) {
+    // Sanity checks and trace buffers
+    TRACE_STACK_USAGE();
+    {
+        VALIDATE(p2 == P2_UNUSED, ERR_INVALID_REQUEST_PARAMETERS);
+        TRACE_BUFFER(constDataBuffer, constSize);
+        TRACE_BUFFER(varDataBuffer, varSize);
+    }
+
+    // Data format
+    VALIDATE(constSize == 0, ERR_INVALID_DATA);
+    struct {
+        uint8_t chainId[CHAIN_ID_LENGTH];
+        uint8_t derivationPath[1 + sizeof(uint32_t) *
+                                       BIP44_MAX_PATH_ELEMENTS];  // 1 stands for number of
+                                                                  // derivation math elements
+    }* varData = (void*) varDataBuffer;
+    VALIDATE(varSize >= SIZEOF(varData->chainId), ERR_INVALID_DATA);
+
+    // Parsing: network, ctx->wittnessPath, ctx->dataToAppendToTx,
+    network_type_t network = NETWORK_UNKNOWN;
+    {
+        network = getNetworkByChainId(varData->chainId, SIZEOF(varData->chainId));
+        TRACE("Chain: %d", (int) network);
+        VALIDATE(network == NETWORK_MAINNET || network == NETWORK_TESTNET, ERR_INVALID_DATA);
+
+        const size_t parsedSize = bip44_parseFromWire(&ctx->wittnessPath,
+                                                      varData->derivationPath,
+                                                      varSize - SIZEOF(varData->chainId));
+        BIP44_PRINTF(&ctx->wittnessPath);
+        PRINTF("\n");
+        VALIDATE(parsedSize == varSize - SIZEOF(varData->chainId), ERR_INVALID_DATA);
+
+        STATIC_ASSERT(SIZEOF(ctx->dataToAppendToTx) >= SIZEOF(varData->chainId),
+                      "Buffer too small");
+        memcpy(ctx->dataToAppendToTx, varData->chainId, SIZEOF(varData->chainId));
+        ctx->dataToAppendToTxLen = SIZEOF(varData->chainId);
+    }
+
+    // Prepare display variables ctx->key, ctx->value
+    {
+        TRACE_STACK_USAGE();
+        snprintf(ctx->key, MAX_DISPLAY_KEY_LENGTH, "Chain");
+        switch (network) {
+#define CASE(NETWORK, CHAIN_STRING)                                   \
+    case NETWORK: {                                                   \
+        snprintf(ctx->value, MAX_DISPLAY_VALUE_LENGTH, CHAIN_STRING); \
+        break;                                                        \
     }
             CASE(NETWORK_MAINNET, "Mainnet");
             CASE(NETWORK_TESTNET, "Testnet");
-#undef CASE
             default:
                 THROW(ERR_NOT_IMPLEMENTED);
-        }
-    }
-
-    UI_STEP(HANDLE_INIT_STEP_RESPOND) {
-        respondSuccessEmptyMsg();
-        advanceStage();
-    }
-
-    UI_STEP_END(HANDLE_INIT_STEP_INVALID);
-}
-
-__noinline_due_to_stack__ void signTx_handleInitAPDU(uint8_t p2,
-                                                     uint8_t* wireDataBuffer,
-                                                     size_t wireDataSize) {
-    TRACE_STACK_USAGE();
-    {
-        // sanity checks
-        CHECK_STAGE(SIGN_STAGE_INIT);
-
-        VALIDATE(p2 == P2_UNUSED, ERR_INVALID_REQUEST_PARAMETERS);
-        ASSERT(wireDataSize < BUFFER_SIZE_PARANOIA);
-    }
-
-    {
-        // parse data
-        TRACE_BUFFER(wireDataBuffer, wireDataSize);
-
-        struct {
-            uint8_t chainId[32];
-        }* wireData = (void*) wireDataBuffer;
-
-        VALIDATE(SIZEOF(*wireData) == wireDataSize, ERR_INVALID_DATA);
-
-        TRACE("SHA_256_init");
-        sha_256_init(&ctx->hashContext);
-        sha_256_append(&ctx->hashContext, wireData->chainId, SIZEOF(wireData->chainId));
-
-        ctx->network = getNetworkByChainId(wireData->chainId, SIZEOF(wireData->chainId));
-        TRACE("Network %d:", ctx->network);
-    }
-
-    security_policy_t policy = policyForSignTxInit(ctx->network);
-    TRACE("Policy: %d", (int) policy);
-    ENSURE_NOT_DENIED(policy);
-    {
-        // select UI steps
-        switch (policy) {
-#define CASE(POLICY, UI_STEP)   \
-    case POLICY: {              \
-        ctx->ui_step = UI_STEP; \
-        break;                  \
-    }
-            CASE(POLICY_SHOW_BEFORE_RESPONSE, HANDLE_INIT_STEP_DISPLAY_DETAILS);
 #undef CASE
-            default:
-                THROW(ERR_NOT_IMPLEMENTED);
         }
     }
+    // Reading data finished, from now on we use G_io_apdu_buffer for output
 
-    signTx_handleInit_ui_runStep();
-}
-
-// ============================== HEADER ==============================
-enum {
-    HANDLE_HEADER_STEP_EXPIRATION = 200,
-    HANDLE_HEADER_STEP_REF_BLOCK_NUM,
-    HANDLE_HEADER_STEP_REF_BLOCK_PREFIX,
-    HANDLE_HEADER_STEP_RESPOND,
-    HANDLE_HEADER_STEP_INVALID,
-};
-
-static void signTx_handleHeader_ui_runStep() {
-    TRACE("UI step %d", ctx->ui_step);
-    TRACE_STACK_USAGE();
-    ui_callback_fn_t* this_fn = signTx_handleHeader_ui_runStep;
-
-    UI_STEP_BEGIN(ctx->ui_step, this_fn);
-
-    /*	UI_STEP(HANDLE_HEADER_STEP_EXPIRATION) {
-                    ui_displayTimeScreen(
-                                    "Expiration",
-                                    ctx->expiration,
-                                    this_fn
-                    );
-            }
-
-            UI_STEP(HANDLE_HEADER_STEP_REF_BLOCK_NUM) {
-                    ui_displayUint64Screen(
-                                    "Ref Block Num",
-                                    ctx->refBlockNum,
-                                    this_fn
-                    );
-            }
-
-            UI_STEP(HANDLE_HEADER_STEP_REF_BLOCK_PREFIX) {
-                    ui_displayUint64Screen(
-                                    "Ref Block Prefix",
-                                    ctx->refBlockPrefix,
-                                    this_fn
-                    );
-            }*/
-
-    UI_STEP(HANDLE_HEADER_STEP_RESPOND) {
-        respondSuccessEmptyMsg();
-        advanceStage();
-    }
-
-    UI_STEP_END(HANDLE_HEADER_STEP_INVALID);
-}
-
-__noinline_due_to_stack__ void signTx_handleHeaderAPDU(uint8_t p2,
-                                                       uint8_t* wireDataBuffer,
-                                                       size_t wireDataSize) {
-    TRACE_STACK_USAGE();
+    // Append data to hash and prepare response (none)
     {
-        // sanity checks
-        CHECK_STAGE(SIGN_STAGE_HEADER);
-
-        VALIDATE(p2 == P2_UNUSED, ERR_INVALID_REQUEST_PARAMETERS);
-        ASSERT(wireDataSize < BUFFER_SIZE_PARANOIA);
-    }
-
-    {
-        // parse data
-        TRACE_BUFFER(wireDataBuffer, wireDataSize);
-
-        struct {
-            uint8_t expiration[4];
-            uint8_t refBlockNum[2];
-            uint8_t refBlockPrefix[4];
-        }* wireData = (void*) wireDataBuffer;
-
-        VALIDATE(SIZEOF(*wireData) == wireDataSize, ERR_INVALID_DATA);
-
-        ctx->expiration = u4be_read(wireData->expiration);
-        sha_256_append(&ctx->hashContext, (uint8_t*) &ctx->expiration, sizeof(ctx->expiration));
-
-        ctx->refBlockNum = u2be_read(wireData->refBlockNum);
-        sha_256_append(&ctx->hashContext,
-                       (uint8_t*) &ctx->refBlockNum,
-                       SIZEOF(wireData->refBlockNum));
-
-        ctx->refBlockPrefix = u4be_read(wireData->refBlockPrefix);
-        sha_256_append(&ctx->hashContext, (uint8_t*) &ctx->refBlockPrefix, sizeof(ctx->expiration));
-
-        uint8_t buf[4];  // max_net_usage_words, max_cpu_usage_ms, delay_sec, context_free_actions
-        explicit_bzero(buf, sizeof(buf));  // SIZEOF does no work for 4
-        sha_256_append(&ctx->hashContext, buf, sizeof(buf));
-    }
-
-    security_policy_t policy = policyForSignTxHeader();
-    TRACE("Policy: %d", (int) policy);
-    ENSURE_NOT_DENIED(policy);
-    {
-        // select UI steps
-        switch (policy) {
-#define CASE(POLICY, UI_STEP)   \
-    case POLICY: {              \
-        ctx->ui_step = UI_STEP; \
-        break;                  \
-    }
-            CASE(POLICY_SHOW_BEFORE_RESPONSE, HANDLE_HEADER_STEP_RESPOND);
-#undef CASE
-            default:
-                THROW(ERR_NOT_IMPLEMENTED);
-        }
-    }
-
-    signTx_handleHeader_ui_runStep();
-}
-
-// ============================== ACTION HEADER ==============================
-
-enum {
-    HANDLE_ACTION_HEADER_STEP_SHOW_TYPE = 300,
-    HANDLE_ACTION_HEADER_STEP_RESPOND,
-    HANDLE_ACTION_HEADER_STEP_INVALID,
-};
-
-static void signTx_handleActionHeader_ui_runStep() {
-    TRACE("UI step %d", ctx->ui_step);
-    TRACE_STACK_USAGE();
-    ui_callback_fn_t* this_fn = signTx_handleActionHeader_ui_runStep;
-
-    UI_STEP_BEGIN(ctx->ui_step, this_fn);
-
-    UI_STEP(HANDLE_ACTION_HEADER_STEP_SHOW_TYPE) {
-        switch (ctx->action_type) {
-#define CASE(ACTION, STRING)                                \
-    case ACTION: {                                          \
-        ui_displayPaginatedText("Action", STRING, this_fn); \
-        break;                                              \
-    }
-            CASE(ACTION_TYPE_TRNSFIOPUBKY, "Transfer FIO tokens");
-#undef CASE
-            default:
-                THROW(ERR_NOT_IMPLEMENTED);
-        }
-    }
-
-    UI_STEP(HANDLE_ACTION_HEADER_STEP_RESPOND) {
-        respondSuccessEmptyMsg();
-        advanceStage();
-    }
-
-    UI_STEP_END(HANDLE_ACTION_HEADER_STEP_INVALID);
-}
-
-__noinline_due_to_stack__ void signTx_handleActionHeaderAPDU(uint8_t p2,
-                                                             uint8_t* wireDataBuffer,
-                                                             size_t wireDataSize) {
-    TRACE_STACK_USAGE();
-    {
-        // sanity checks
-        CHECK_STAGE(SIGN_STAGE_ACTION_HEADER);
-
-        VALIDATE(p2 == P2_UNUSED, ERR_INVALID_REQUEST_PARAMETERS);
-        ASSERT(wireDataSize < BUFFER_SIZE_PARANOIA);
-    }
-
-    {
-        // parse data
-        TRACE_BUFFER(wireDataBuffer, wireDataSize);
-
-        struct {
-            uint8_t contractAccountName[CONTRACT_ACCOUNT_NAME_LENGTH];
-        }* wireData = (void*) wireDataBuffer;
-
-        VALIDATE(SIZEOF(*wireData) == wireDataSize, ERR_INVALID_DATA);
-
-        uint8_t buf[1];
-        buf[0] = 1;
-        sha_256_append(&ctx->hashContext, buf, SIZEOF(buf));  // one action
-        sha_256_append(&ctx->hashContext, (uint8_t*) wireData, SIZEOF(*wireData));
-
-        ctx->action_type = getActionTypeByContractAccountName(ctx->network,
-                                                              wireData->contractAccountName,
-                                                              CONTRACT_ACCOUNT_NAME_LENGTH);
-        TRACE("Action type %d:", ctx->action_type);
-    }
-
-    security_policy_t policy = policyForSignTxActionHeader(ctx->action_type);
-    TRACE("Policy: %d", (int) policy);
-    ENSURE_NOT_DENIED(policy);
-    {
-        // select UI steps
-        switch (policy) {
-#define CASE(POLICY, UI_STEP)   \
-    case POLICY: {              \
-        ctx->ui_step = UI_STEP; \
-        break;                  \
-    }
-            CASE(POLICY_SHOW_BEFORE_RESPONSE, HANDLE_ACTION_HEADER_STEP_SHOW_TYPE);
-#undef CASE
-            default:
-                THROW(ERR_NOT_IMPLEMENTED);
-        }
-    }
-
-    signTx_handleActionHeader_ui_runStep();
-}
-
-// ============================== ACTION AUTHORIZATION ==============================
-
-enum {
-    HANDLE_ACTION_AUTHORIZATION_STEP_SHOW_ACTOR = 400,
-    HANDLE_ACTION_AUTHORIZATION_STEP_SHOW_PERMISSION,
-    HANDLE_ACTION_AUTHORIZATION_STEP_RESPOND,
-    HANDLE_ACTION_AUTHORIZATION_STEP_INVALID,
-};
-
-static void signTx_handleActionAuthorization_ui_runStep() {
-    TRACE("UI step %d", ctx->ui_step);
-    TRACE_STACK_USAGE();
-    ui_callback_fn_t* this_fn = signTx_handleActionAuthorization_ui_runStep;
-
-    UI_STEP_BEGIN(ctx->ui_step, this_fn);
-
-    /*	UI_STEP(HANDLE_ACTION_AUTHORIZATION_STEP_SHOW_ACTOR) {
-                    ui_displayPaginatedText(
-                            "Actor",
-                            ctx->actionValidationActor,
-                            this_fn
-                    );
-            }
-
-            UI_STEP(HANDLE_ACTION_AUTHORIZATION_STEP_SHOW_PERMISSION) {
-                    ui_displayPaginatedText(
-                            "Permission",
-                            ctx->actionValidationPermission,
-                            this_fn
-                    );
-            }*/
-
-    UI_STEP(HANDLE_ACTION_AUTHORIZATION_STEP_RESPOND) {
-        respondSuccessEmptyMsg();
-        advanceStage();
-    }
-
-    UI_STEP_END(HANDLE_ACTION_AUTHORIZATION_STEP_INVALID);
-}
-
-__noinline_due_to_stack__ void signTx_handleActionAuthorizationAPDU(uint8_t p2,
-                                                                    uint8_t* wireDataBuffer,
-                                                                    size_t wireDataSize) {
-    TRACE_STACK_USAGE();
-    {
-        // sanity checks
-        CHECK_STAGE(SIGN_STAGE_ACTION_AUTHORIZATION);
-
-        VALIDATE(p2 == P2_UNUSED, ERR_INVALID_REQUEST_PARAMETERS);
-        ASSERT(wireDataSize < BUFFER_SIZE_PARANOIA);
-    }
-
-    {
-        // parse data
-        TRACE_BUFFER(wireDataBuffer, wireDataSize);
-
-        struct {
-            uint8_t actor[NAME_VAR_LENGTH];
-            uint8_t permission[NAME_VAR_LENGTH];
-        }* wireData = (void*) wireDataBuffer;
-
-        VALIDATE(SIZEOF(*wireData) == wireDataSize, ERR_INVALID_DATA);
-
-        uint8_t buf[1];
-        buf[0] = 1;
-        sha_256_append(&ctx->hashContext, buf, SIZEOF(buf));  // one authorization
-        sha_256_append(&ctx->hashContext, wireData->actor, SIZEOF(wireData->actor));
-        sha_256_append(&ctx->hashContext, wireData->permission, SIZEOF(wireData->permission));
-
-        uint8array_name_to_string(wireData->actor,
-                                  NAME_VAR_LENGTH,
-                                  ctx->actionValidationActor,
-                                  NAME_STRING_MAX_LENGTH);
-        uint8array_name_to_string(wireData->permission,
-                                  NAME_VAR_LENGTH,
-                                  ctx->actionValidationPermission,
-                                  NAME_STRING_MAX_LENGTH);
-    }
-
-    security_policy_t policy = policyForSignTxActionAuthorization();
-    TRACE("Policy: %d", (int) policy);
-    ENSURE_NOT_DENIED(policy);
-    {
-        // select UI steps
-        switch (policy) {
-#define CASE(POLICY, UI_STEP)   \
-    case POLICY: {              \
-        ctx->ui_step = UI_STEP; \
-        break;                  \
-    }
-            CASE(POLICY_SHOW_BEFORE_RESPONSE, HANDLE_ACTION_AUTHORIZATION_STEP_RESPOND);
-#undef CASE
-            default:
-                THROW(ERR_NOT_IMPLEMENTED);
-        }
-    }
-
-    signTx_handleActionAuthorization_ui_runStep();
-}
-
-// ============================== ACTION DATA ==============================
-
-enum {
-    HANDLE_ACTION_DATA_STEP_SHOW_PUBKEY = 400,
-    HANDLE_ACTION_DATA_STEP_SHOW_AMOUNT,
-    HANDLE_ACTION_DATA_STEP_SHOW_MAX_FEE,
-    HANDLE_ACTION_DATA_STEP_SHOW_TPID,
-    HANDLE_ACTION_DATA_STEP_RESPOND,
-    HANDLE_ACTION_DATA_STEP_INVALID,
-};
-
-static void signTx_handleActionData_ui_runStep() {
-    TRACE("UI step %d", ctx->ui_step);
-    TRACE_STACK_USAGE();
-    ui_callback_fn_t* this_fn = signTx_handleActionData_ui_runStep;
-
-    UI_STEP_BEGIN(ctx->ui_step, this_fn);
-
-    UI_STEP(HANDLE_ACTION_DATA_STEP_SHOW_PUBKEY) {
-        ui_displayPaginatedText("Payee Pubkey", ctx->pubkey, this_fn);
-    }
-
-    UI_STEP(HANDLE_ACTION_DATA_STEP_SHOW_AMOUNT) {
-        ui_displayFIOAmountScreen("Amount", ctx->amount, this_fn);
-    }
-
-    UI_STEP(HANDLE_ACTION_DATA_STEP_SHOW_MAX_FEE) {
-        ui_displayFIOAmountScreen("Max fee", ctx->maxFee, this_fn);
-    }
-
-    /*	UI_STEP(HANDLE_ACTION_DATA_STEP_SHOW_TPID) {
-                    ui_displayPaginatedText(
-                            "Tpid",
-                            ctx->tpid,
-                            this_fn
-                    );
-            }*/
-
-    UI_STEP(HANDLE_ACTION_DATA_STEP_RESPOND) {
-        respondSuccessEmptyMsg();
-        advanceStage();
-    }
-
-    UI_STEP_END(HANDLE_ACTION_DATA_STEP_INVALID);
-}
-
-__noinline_due_to_stack__ void signTx_handleActionDataAPDU(uint8_t p2,
-                                                           uint8_t* wireDataBuffer,
-                                                           size_t wireDataSize) {
-    TRACE_STACK_USAGE();
-    {
-        // sanity checks
-        CHECK_STAGE(SIGN_STAGE_ACTION_DATA);
-
-        VALIDATE(p2 == P2_UNUSED, ERR_INVALID_REQUEST_PARAMETERS);
-        ASSERT(wireDataSize < BUFFER_SIZE_PARANOIA);
-    }
-
-    {
-        // parse data
-        TRACE_BUFFER(wireDataBuffer, wireDataSize);
-
-        struct {
-            uint8_t dataLength[1];
-            uint8_t pubkeyLength[1];
-            uint8_t pubkey[MAX_WIF_PUBKEY_LENGTH];  // null terminated, for convenience, we will use
-                                                    // displayPaginatedText
-        }* wireData1 = (void*) wireDataBuffer;
-        const uint8_t expectedWireData1Length =
-            SIZEOF(*wireData1) - MAX_WIF_PUBKEY_LENGTH + wireData1->pubkeyLength[0] + 1;
-
-        struct {
-            uint8_t amount[8];
-            uint8_t maxFee[8];
-            uint8_t actor[NAME_VAR_LENGTH];
-            uint8_t tpidLength[1];
-            uint8_t tpid[MAX_TPID_LENGTH];  // null terminated, for convenience, we will use
-                                            // displayPaginatedText
-        }* wireData2 = ((void*) wireDataBuffer) + expectedWireData1Length;
-        const uint8_t expectedWireData2Length =
-            SIZEOF(*wireData2) - MAX_TPID_LENGTH + wireData2->tpidLength[0] + 1;
-
-        VALIDATE(expectedWireData1Length + expectedWireData2Length == wireDataSize,
+        TRACE_STACK_USAGE();
+        VALIDATE(!ctx->dhIsActive, ERR_INVALID_STATE);
+        VALIDATE(countedSectionProcess(&ctx->countedSections, ctx->dataToAppendToTxLen),
                  ERR_INVALID_DATA);
-        VALIDATE(wireData1->dataLength[0] == wireDataSize - 3,
-                 ERR_INVALID_DATA);  //-1 for data length, -2 fo trailing 0's
-        VALIDATE(wireData1->dataLength[0] <= MAX_SINGLE_BYTE_LENGTH, ERR_INVALID_DATA);
-        VALIDATE(wireData1->pubkeyLength[0] < MAX_SINGLE_BYTE_LENGTH,
-                 ERR_INVALID_DATA);  // < for terminating 0
-        VALIDATE(wireData1->pubkeyLength[0] < MAX_WIF_PUBKEY_LENGTH,
-                 ERR_INVALID_DATA);  // < for terminating 0
-        str_validateNullTerminatedTextBuffer(wireData1->pubkey, wireData1->pubkeyLength[0]);
+        sha_256_append(&ctx->hashContext, ctx->dataToAppendToTx, ctx->dataToAppendToTxLen);
 
-        VALIDATE(wireData2->tpidLength[0] < MAX_SINGLE_BYTE_LENGTH,
-                 ERR_INVALID_DATA);  // < for terminating 0
-        VALIDATE(wireData2->tpidLength[0] < MAX_TPID_LENGTH,
-                 ERR_INVALID_DATA);  // < for terminating 0
-        str_validateNullTerminatedTextBuffer(wireData2->tpid, wireData2->tpidLength[0]);
-
-        ctx->pubkey = (char*) wireData1->pubkey;
-        ctx->amount = u8be_read(wireData2->amount);
-        ctx->maxFee = u8be_read(wireData2->maxFee);
-        uint8array_name_to_string(wireData2->actor,
-                                  SIZEOF(wireData2->actor),
-                                  ctx->actionDataActor,
-                                  NAME_STRING_MAX_LENGTH);
-        ctx->tpid = (char*) wireData2->tpid;
-
-        sha_256_append(&ctx->hashContext,
-                       (uint8_t*) wireData1->dataLength,
-                       SIZEOF(wireData1->dataLength));
-        sha_256_append(&ctx->hashContext,
-                       (uint8_t*) wireData1->pubkeyLength,
-                       SIZEOF(wireData1->pubkeyLength));
-        sha_256_append(&ctx->hashContext, (uint8_t*) wireData1->pubkey, wireData1->pubkeyLength[0]);
-
-        sha_256_append(&ctx->hashContext, (uint8_t*) &ctx->amount, SIZEOF(ctx->amount));
-        sha_256_append(&ctx->hashContext, (uint8_t*) &ctx->maxFee, SIZEOF(ctx->maxFee));
-        sha_256_append(&ctx->hashContext, (uint8_t*) wireData2->actor, SIZEOF(wireData2->actor));
-        sha_256_append(&ctx->hashContext,
-                       (uint8_t*) wireData2->tpidLength,
-                       SIZEOF(wireData2->tpidLength));
-        sha_256_append(&ctx->hashContext, (uint8_t*) wireData2->tpid, wireData2->tpidLength[0]);
+        ctx->responseLength = 0;
     }
 
-    security_policy_t policy =
-        policyForSignTxActionData(ctx->actionValidationActor, ctx->actionDataActor);
-    TRACE("Policy: %d", (int) policy);
-    ENSURE_NOT_DENIED(policy);
+    // Security policy
+    security_policy_t policy = POLICY_DENY;
     {
-        // select UI steps
+        policy = policyForSignTxInit(&ctx->wittnessPath);
+        TRACE("Policy: %d", (int) policy);
+        ENSURE_NOT_DENIED(policy);
+        // select UI step
+        if (policy == POLICY_SHOW_BEFORE_RESPONSE) {
+            ctx->ui_step = HANDLE_SIMPLE_STEP_DISPLAY_DETAILS;
+        } else {
+            THROW(ERR_NOT_IMPLEMENTED);
+        }
+    }
+
+    // Run ui step
+    signTx_ui_runStep_simple();
+}
+
+// ======================= APPEND CONST DATA ===========================
+
+__noinline_due_to_stack__ void signTx_handleAppendConstDataAPDU(
+    uint8_t p2,
+    uint8_t* constDataBuffer,
+    size_t constSize,
+    MARK_UNUSED_NO_DEVEL uint8_t* varDataBuffer,
+    size_t varSize) {
+    // Sanity checks and trace buffers
+    TRACE_STACK_USAGE();
+    {
+        VALIDATE(p2 == P2_UNUSED, ERR_INVALID_REQUEST_PARAMETERS);
+        TRACE_BUFFER(constDataBuffer, constSize);
+        TRACE_BUFFER(varDataBuffer, varSize);
+    }
+
+    // Data format
+    struct {
+        uint8_t data[MAX_TX_APPEND_IN_SINGLE_APDU];
+    }* constData = (void*) constDataBuffer;
+    VALIDATE(constSize < MAX_TX_APPEND_IN_SINGLE_APDU, ERR_INVALID_DATA);
+    VALIDATE(varSize == 0, ERR_INVALID_DATA);
+
+    // Parsing: ctx->dataToAppendToTx, ctx->dataToAppendToTxLen
+    // Preparing display variables ctx->key, ctx->value
+    {
+        memcpy(ctx->dataToAppendToTx, constData, constSize);
+        ctx->dataToAppendToTxLen = constSize;
+        ctx->key[0] = 0;
+        ctx->value[0] = 0;
+    }
+    // Reading data finished, from now on we use G_io_apdu_buffer for output
+
+    // Append data to hash (with possible DH encryption) and prepare response
+    {
+        VALIDATE(countedSectionProcess(&ctx->countedSections, ctx->dataToAppendToTxLen),
+                 ERR_INVALID_DATA);
+        processShaAndPosibleDHAndPrepareResponse();
+    }
+
+    // Run ui step
+    ctx->ui_step = HANDLE_SIMPLE_STEP_RESPOND;
+    signTx_ui_runStep_simple();
+}
+
+// ======================= SHOW MESSAGE ===========================
+
+__noinline_due_to_stack__ void signTx_handleShowMessageAPDU(
+    uint8_t p2,
+    uint8_t* constDataBuffer,
+    size_t constSize,
+    MARK_UNUSED_NO_DEVEL uint8_t* varDataBuffer,
+    size_t varSize) {
+    // Sanity checks and trace buffers
+    TRACE_STACK_USAGE();
+    {
+        VALIDATE(p2 == P2_UNUSED, ERR_INVALID_REQUEST_PARAMETERS);
+        TRACE_BUFFER(constDataBuffer, constSize);
+        TRACE_BUFFER(varDataBuffer, varSize);
+    }
+
+    // Data format
+    struct {
+        uint8_t displayKeyLen;
+        uint8_t displayKey[MAX_DISPLAY_KEY_LENGTH];
+    }* constData = (void*) constDataBuffer;
+    VALIDATE(constSize >= 1, ERR_INVALID_DATA);
+    VALIDATE(constData->displayKeyLen < MAX_DISPLAY_KEY_LENGTH - 1, ERR_INVALID_DATA);
+    VALIDATE(constSize >= 2 + constData->displayKeyLen, ERR_INVALID_DATA);
+    struct {
+        uint8_t displayValueLen;
+        uint8_t displayValue[MAX_DISPLAY_VALUE_LENGTH];
+    }* constData2 = (void*) (constDataBuffer + 1 + constData->displayKeyLen);
+    VALIDATE(constData2->displayValueLen < MAX_DISPLAY_VALUE_LENGTH - 1, ERR_INVALID_DATA);
+    VALIDATE(constSize == 2 + constData->displayKeyLen + constData2->displayValueLen,
+             ERR_INVALID_DATA);
+    VALIDATE(varSize == 0, ERR_INVALID_DATA);
+
+    // Parsing
+    // Prepare display variables ctx->key, ctx->value
+    {
+        STATIC_ASSERT(SIZEOF(ctx->key) >= SIZEOF(constData->displayKey),
+                      "Display buffer too small");
+        STATIC_ASSERT(SIZEOF(ctx->value) >= SIZEOF(constData2->displayValue),
+                      "Display buffer too small");
+        str_validateTextBuffer(constData->displayKey, constData->displayKeyLen);
+        str_validateTextBuffer(constData2->displayValue, constData2->displayValueLen);
+        memmove(ctx->key, constData->displayKey, constData->displayKeyLen);
+        ctx->key[constData->displayKeyLen] = 0;
+        memmove(ctx->value, constData2->displayValue, constData2->displayValueLen);
+        ctx->value[constData2->displayValueLen] = 0;
+    }
+
+    // Reading data finished, from now on we use G_io_apdu_buffer for output
+
+    // Append data to hash (none) and prepare response (none)
+    { ctx->responseLength = 0; }
+
+    // Run ui step
+    ctx->ui_step = HANDLE_SIMPLE_STEP_DISPLAY_DETAILS;
+    signTx_ui_runStep_simple();
+}
+
+// ======================= APPEND DATA ===========================
+
+__noinline_due_to_stack__ void signTx_handleAppendDataAPDU(uint8_t p2,
+                                                           uint8_t* constDataBuffer,
+                                                           size_t constSize,
+                                                           uint8_t* varDataBuffer,
+                                                           size_t varSize) {
+    // Sanity checks and trace buffers
+    TRACE_STACK_USAGE();
+    {
+        VALIDATE(p2 == P2_UNUSED, ERR_INVALID_REQUEST_PARAMETERS);
+        TRACE_BUFFER(constDataBuffer, constSize);
+        TRACE_BUFFER(varDataBuffer, varSize);
+    }
+
+    // Data format
+    struct {
+        uint8_t valueFormat;
+        uint8_t valueValidation;
+        uint8_t valueValidationArg1[8];
+        uint8_t valueValidationArg2[8];
+        uint8_t valuePolicyAndStorage;
+        uint8_t displayKeyLen;
+        uint8_t displayKey[MAX_DISPLAY_KEY_LENGTH];
+    }* constData = (void*) constDataBuffer;
+    VALIDATE(constSize >= 20, ERR_INVALID_DATA);
+    VALIDATE(constData->displayKeyLen <= MAX_DISPLAY_KEY_LENGTH - 1, ERR_INVALID_DATA);
+    VALIDATE(constSize == 20 + constData->displayKeyLen, ERR_INVALID_DATA);
+    struct {
+        uint8_t value[MAX_TX_APPEND_IN_SINGLE_APDU];
+    }* varData = (void*) varDataBuffer;
+    VALIDATE(varSize <= MAX_TX_APPEND_IN_SINGLE_APDU, ERR_INVALID_DATA);
+
+    // Storage validation
+    {
+        tx_storage_check_t storage = constData->valuePolicyAndStorage & 0xF0;
+        TRACE("Storage request :%d, Stored length %d,%d,%d",
+              (int) storage / 0x10,
+              (int) ctx->storage.storedValueLen1,
+              (int) ctx->storage.storedValueLen2,
+              (int) ctx->storage.storedValueLen3);
+        TRACE("Initialized: %d", ctx->storage.initialized_magic);
+        switch (storage) {
+#define CASE_STORAGE_EQUALS(n)                                                                     \
+    case VALUE_STORAGE_CHECK_R##n: {                                                               \
+        ASSERT(ctx->storage.initialized_magic == TX_STORAGE_INITIALIZED_MAGIC);                    \
+        ASSERT(ctx->storage.storedValueLen##n <= sizeof(ctx->storage.storedValue##n));             \
+        VALIDATE(ctx->storage.storedValueLen##n == varSize, ERR_INVALID_DATA);                     \
+        VALIDATE(!memcmp(ctx->storage.storedValue##n, varData->value, varSize), ERR_INVALID_DATA); \
+        break;                                                                                     \
+    }
+            CASE_STORAGE_EQUALS(1);
+            CASE_STORAGE_EQUALS(2);
+            CASE_STORAGE_EQUALS(3);
+            case VALUE_STORAGE_CHECK_R1_DECODE_NAME: {
+                ASSERT(ctx->storage.initialized_magic == TX_STORAGE_INITIALIZED_MAGIC);
+                ASSERT(ctx->storage.storedValueLen1 <= sizeof(ctx->storage.storedValue1));
+                char buffer[14];
+                uint8array_name_to_string(ctx->storage.storedValue1,
+                                          ctx->storage.storedValueLen1,
+                                          buffer,
+                                          SIZEOF(buffer));
+                VALIDATE(varSize < SIZEOF(buffer), ERR_INVALID_DATA);
+                TRACE("%s", buffer);
+                TRACE("%s", varData->value);
+                TRACE("%d", varSize);
+                VALIDATE(buffer[varSize] == 0, ERR_INVALID_DATA);
+                VALIDATE(!memcmp(buffer, varData->value, varSize), ERR_INVALID_DATA);
+                break;
+            }
+            case VALUE_STORAGE_CHECK_NO:
+                break;
+            default:
+                THROW(ERR_INVALID_DATA);
+#undef CASE_STORAGE_EQUALS
+        }
+    }
+
+    // Parsing ctx->dataToAppendToTx, ctx->dataToAppendToTxLen
+    // Prepare display variables ctx->key, ctx->value, policy
+    security_policy_t policy = POLICY_DENY;
+    {
+        str_validateTextBuffer(constData->displayKey, constData->displayKeyLen);
+        ASSERT(SIZEOF(ctx->key) >= constData->displayKeyLen + 1);
+        memcpy(ctx->key, constData->displayKey, constData->displayKeyLen);
+        ctx->key[constData->displayKeyLen] = 0;
+
+        parseValueToDisplay(constData->valueFormat,
+                            constData->valueValidation,
+                            constData->valueValidationArg1,
+                            constData->valueValidationArg2,
+                            varData->value,
+                            varSize,
+                            ctx->value);
+
+        ASSERT(SIZEOF(ctx->dataToAppendToTx) >= varSize);
+        memcpy(ctx->dataToAppendToTx, varData->value, varSize);
+        ctx->dataToAppendToTxLen = varSize;
+
+        policy = constData->valuePolicyAndStorage & 0x0F;
+    }
+
+    // Reading data finished, from now on we use G_io_apdu_buffer for output
+
+    // Append data to hash (with possible DH encryption) and prepare response
+    {
+        VALIDATE(countedSectionProcess(&ctx->countedSections, varSize), ERR_INVALID_DATA);
+        processShaAndPosibleDHAndPrepareResponse();
+    }
+
+    // Policy
+    {
+        TRACE("Policy %d", (int) policy);
         switch (policy) {
 #define CASE(POLICY, UI_STEP)   \
     case POLICY: {              \
         ctx->ui_step = UI_STEP; \
         break;                  \
     }
-            CASE(POLICY_SHOW_BEFORE_RESPONSE, HANDLE_ACTION_DATA_STEP_SHOW_PUBKEY);
-#undef CASE
+            CASE(POLICY_ALLOW_WITHOUT_PROMPT, HANDLE_SIMPLE_STEP_RESPOND);
+            CASE(POLICY_SHOW_BEFORE_RESPONSE, HANDLE_SIMPLE_STEP_DISPLAY_DETAILS);
+            CASE(POLICY_SHOW_BEFORE_RESPONSE_IF_NONEMPTY,
+                 strnlen(ctx->value, SIZEOF(ctx->value)) == 0 ? HANDLE_SIMPLE_STEP_RESPOND
+                                                              : HANDLE_SIMPLE_STEP_DISPLAY_DETAILS)
             default:
                 THROW(ERR_NOT_IMPLEMENTED);
+#undef CASE
         }
     }
 
-    signTx_handleActionData_ui_runStep();
+    // Run ui step
+    signTx_ui_runStep_simple();
 }
 
-// ============================== WITNESS ==============================
+// ======================= START COUNTED SECTION ===========================
 
+__noinline_due_to_stack__ void signTx_handleStartCountedSectionAPDU(uint8_t p2,
+                                                                    uint8_t* constDataBuffer,
+                                                                    size_t constSize,
+                                                                    uint8_t* varDataBuffer,
+                                                                    size_t varSize) {
+    // Sanity checks and trace buffers
+    TRACE_STACK_USAGE();
+    {
+        VALIDATE(p2 == P2_UNUSED, ERR_INVALID_REQUEST_PARAMETERS);
+        TRACE_BUFFER(constDataBuffer, constSize);
+        TRACE_BUFFER(varDataBuffer, varSize);
+    }
+
+    // Data format
+    struct {
+        uint8_t valueFormat;
+        uint8_t valueValidation;
+        uint8_t valueValidationArg1[8];
+        uint8_t valueValidationArg2[8];
+    }* constData = (void*) constDataBuffer;
+    VALIDATE(constSize == SIZEOF(*constData), ERR_INVALID_DATA);
+    struct {
+        uint8_t value[MAX_TX_APPEND_IN_SINGLE_APDU];
+    }* varData = (void*) varDataBuffer;
+    VALIDATE(varSize <= MAX_TX_APPEND_IN_SINGLE_APDU, ERR_INVALID_DATA);
+
+    // Parse data numberOfExpectedBytes, ctx->dataToAppendToTx, ctx->dataToAppendToTxLen
+    uint32_t numberOfExpectedBytes = 0;
+    {
+        uint64_t value = 0;
+        parseValueToUInt64(constData->valueFormat,
+                           constData->valueValidation,
+                           constData->valueValidationArg1,
+                           constData->valueValidationArg2,
+                           varData->value,
+                           varSize,
+                           &value);
+        VALIDATE(value <= UINT32_MAX, ERR_INVALID_DATA);  // to fit into uint32_t
+        numberOfExpectedBytes = value;
+
+        memcpy(ctx->dataToAppendToTx, varData->value, varSize);
+        ctx->dataToAppendToTxLen = varSize;
+    }
+
+    // Preparing display variables ctx->key, ctx->value
+    {
+        ctx->key[0] = 0;
+        ctx->value[0] = 0;
+    }
+
+    // Reading data finished, from now on we use G_io_apdu_buffer for output
+
+    // Append data to hash (with possible DH encryption) and prepare response, begin counted section
+    {
+        // this data does not count towards new counted section but counts towards old ones
+        VALIDATE(countedSectionProcess(&ctx->countedSections, ctx->dataToAppendToTxLen),
+                 ERR_INVALID_DATA);
+        VALIDATE(countedSectionBegin(&ctx->countedSections, numberOfExpectedBytes),
+                 ERR_INVALID_DATA);
+        processShaAndPosibleDHAndPrepareResponse();
+    }
+
+    // Run ui step
+    ctx->ui_step = HANDLE_SIMPLE_STEP_RESPOND;
+    signTx_ui_runStep_simple();
+}
+
+// ======================= END COUNTED SECTION ===========================
+
+__noinline_due_to_stack__ void signTx_handleEndCountedSectionAPDU(
+    uint8_t p2,
+    MARK_UNUSED_NO_DEVEL uint8_t* constDataBuffer,
+    size_t constSize,
+    MARK_UNUSED_NO_DEVEL uint8_t* varDataBuffer,
+    size_t varSize) {
+    // Sanity checks and trace buffers
+    TRACE_STACK_USAGE();
+    {
+        VALIDATE(p2 == P2_UNUSED, ERR_INVALID_REQUEST_PARAMETERS);
+        TRACE_BUFFER(constDataBuffer, constSize);
+        TRACE_BUFFER(varDataBuffer, varSize);
+    }
+
+    // Data format
+    VALIDATE(constSize == 0, ERR_INVALID_DATA);
+    VALIDATE(varSize == 0, ERR_INVALID_DATA);
+
+    // Preparing display variables ctx->key, ctx->value
+    {
+        ctx->key[0] = 0;
+        ctx->value[0] = 0;
+    }
+
+    // Reading data finished, from now on we use G_io_apdu_buffer for output
+
+    // Apend data to hash (no data) and response (none)
+    {
+        // Counted section that started before DH encoding cannot end within DH encoding
+        if (ctx->dhIsActive) {
+            VALIDATE(ctx->dhCountedSectionEntryLevel < ctx->countedSections.currentLevel,
+                     ERR_INVALID_STATE);
+        }
+        VALIDATE(countedSectionEnd(&ctx->countedSections), ERR_INVALID_DATA);
+        ctx->responseLength = 0;
+    }
+
+    // Run ui step
+    ctx->ui_step = HANDLE_SIMPLE_STEP_RESPOND;
+    signTx_ui_runStep_simple();
+}
+
+// ======================= STORE_VALUE ===========================
+
+__noinline_due_to_stack__ void signTx_handleStoreValueAPDU(
+    uint8_t p2,
+    MARK_UNUSED_NO_DEVEL uint8_t* constDataBuffer,
+    size_t constSize,
+    uint8_t* varDataBuffer,
+    size_t varSize) {
+    // Sanity checks and trace buffers
+    TRACE_STACK_USAGE();
+    {
+        VALIDATE(1 <= p2 && p2 <= 3, ERR_INVALID_REQUEST_PARAMETERS);  // we have 3 registers
+        TRACE("Storing to %d", (int) p2);
+        TRACE_BUFFER(constDataBuffer, constSize);
+        TRACE_BUFFER(varDataBuffer, varSize);
+    }
+
+    // Data format
+    VALIDATE(constSize == 0, ERR_INVALID_DATA);
+    struct {
+        uint8_t value[MAX_TX_APPEND_IN_SINGLE_APDU];
+    }* varData = (void*) varDataBuffer;
+    // varSize validated in Storage section
+
+    // Storage
+    {
+        switch (p2) {
+#define CASE(n)                                                                     \
+    case n: {                                                                       \
+        ASSERT(ctx->storage.initialized_magic == TX_STORAGE_INITIALIZED_MAGIC);     \
+        VALIDATE(varSize <= sizeof(ctx->storage.storedValue##n), ERR_INVALID_DATA); \
+        ctx->storage.storedValueLen##n = varSize;                                   \
+        memcpy(ctx->storage.storedValue##n, varData->value, varSize);               \
+        break;                                                                      \
+    }
+            CASE(1);
+            CASE(2);
+            CASE(3);
+            default:
+                THROW(ERR_NOT_IMPLEMENTED);
+#undef CASE
+        }
+    }
+
+    // Preparing display variables ctx->key, ctx->value
+    {
+        ctx->key[0] = 0;
+        ctx->value[0] = 0;
+    }
+
+    // Reading data finished, from now on we use G_io_apdu_buffer for output
+
+    // Apend data to hash (no data) and response (no data)
+    { ctx->responseLength = 0; }
+
+    // Run ui step
+    ctx->ui_step = HANDLE_SIMPLE_STEP_RESPOND;
+    signTx_ui_runStep_simple();
+}
+
+// ======================= START DH ENCODING ===========================
 enum {
-    HANDLE_WITNESS_STEP_DISPLAY_DETAILS = 1000,
-    HANDLE_WITNESS_STEP_CONFIRM,
-    HANDLE_WITNESS_STEP_RESPOND,
-    HANDLE_WITNESS_STEP_INVALID,
+    HANDLE_DH_START_STEP_DISPLAY_MESSAGE = 800,
+    HANDLE_DH_START_STEP_RESPOND,
+    HANDLE_DH_START_STEP_INVALID,
 };
 
-static void signTx_handleWitness_ui_runStep() {
+static void signTx_handleDHStart_ui_runStep() {
     TRACE("UI step %d", ctx->ui_step);
     TRACE_STACK_USAGE();
-    ui_callback_fn_t* this_fn = signTx_handleWitness_ui_runStep;
+    ui_callback_fn_t* this_fn = signTx_handleDHStart_ui_runStep;
 
     UI_STEP_BEGIN(ctx->ui_step, this_fn);
 
-    UI_STEP(HANDLE_WITNESS_STEP_DISPLAY_DETAILS) {
-        ui_displayPubkeyScreen("Sign with", &ctx->wittnessPathPubkey, this_fn);
+    UI_STEP(HANDLE_DH_START_STEP_DISPLAY_MESSAGE) {
+        ui_displayPaginatedText("Encrypting", "content", this_fn);
     }
 
-    UI_STEP(HANDLE_WITNESS_STEP_CONFIRM) {
+    UI_STEP(HANDLE_DH_START_STEP_RESPOND) {
+        io_send_buf(SUCCESS, G_io_apdu_buffer, ctx->responseLength);
+        ui_displayBusy();  // needs to happen after I/O
+    }
+
+    UI_STEP_END(HANDLE_DH_START_STEP_INVALID);
+}
+
+__noinline_due_to_stack__ void signTx_handleStartDHEncodingAPDU(
+    uint8_t p2,
+    MARK_UNUSED_NO_DEVEL uint8_t* constDataBuffer,
+    size_t constSize,
+    uint8_t* varDataBuffer,
+    size_t varSize) {
+    // Sanity checks and trace buffers
+    TRACE_STACK_USAGE();
+    {
+        VALIDATE(p2 == P2_UNUSED, ERR_INVALID_REQUEST_PARAMETERS);
+        TRACE_BUFFER(constDataBuffer, constSize);
+        TRACE_BUFFER(varDataBuffer, varSize);
+    }
+
+    // Data format
+    VALIDATE(constSize == 0, ERR_INVALID_DATA);
+    struct {
+        uint8_t pubkey[PUBKEY_LENGTH];
+    }* varData = (void*) varDataBuffer;
+    VALIDATE(varSize == PUBKEY_LENGTH, ERR_INVALID_DATA);
+
+    // Parse data ctx->otherPubkey
+    {
+        cx_err_t err = cx_ecfp_init_public_key_no_throw(CX_CURVE_SECP256K1,
+                                                        varData->pubkey,
+                                                        SIZEOF(varData->pubkey),
+                                                        &ctx->otherPubkey);
+        VALIDATE(err == CX_OK, ERR_INVALID_DATA);
+    }
+
+    // Preparing display variables ctx->key, ctx->value
+    {
+        TRACE_STACK_USAGE();
+        snprintf(ctx->key, MAX_DISPLAY_KEY_LENGTH, "Their Public Key");
+        uint32_t outlen = public_key_to_wif(ctx->otherPubkey.W,
+                                            SIZEOF(ctx->otherPubkey.W),
+                                            ctx->value,
+                                            SIZEOF(ctx->value));
+        ASSERT(outlen < SIZEOF(ctx->value));
+        ctx->value[outlen] = 0;
+    }
+
+    // Reading data finished, from now on we use G_io_apdu_buffer for output
+
+    // Init DH Encoding
+    // Append encrypted data to hash and response
+    {
+        TRACE_STACK_USAGE();
+        VALIDATE(!ctx->dhIsActive, ERR_INVALID_STATE);
+
+        dh_aes_key_t aesKey;
+        BEGIN_TRY {
+            TRY {
+                TRACE_STACK_USAGE();
+                // Compute AES key
+                dh_init_aes_key(&aesKey, &ctx->wittnessPath, &ctx->otherPubkey);
+
+                // Generate IV
+                uint8_t IV[DH_AES_IV_SIZE];
+                cx_rng_no_throw(IV, SIZEOF(IV));
+
+                // INIT dh context
+                STATIC_ASSERT(DH_AES_IV_SIZE == CX_AES_BLOCK_SIZE, "Unexpected IV length");
+                ctx->dhCountedSectionEntryLevel = ctx->countedSections.currentLevel;
+                ctx->responseLength = dh_encode_init(&ctx->dhContext,
+                                                     &aesKey,
+                                                     IV,
+                                                     SIZEOF(IV),
+                                                     G_io_apdu_buffer,
+                                                     SIZEOF(G_io_apdu_buffer));
+                ASSERT(ctx->responseLength == 20);  // first 5 blocks
+                ctx->countedSectionDifference = ctx->responseLength;
+                TRACE("CS diff %d", (int) ctx->responseLength);
+            }
+            FINALLY {
+                explicit_bzero(&aesKey, SIZEOF(aesKey));
+            }
+        }
+        END_TRY;
+
+        sha_256_append(&ctx->hashContext, G_io_apdu_buffer, ctx->responseLength);
+        ctx->dhIsActive = true;
+    }
+
+    // Run ui step
+    ctx->ui_step = HANDLE_DH_START_STEP_DISPLAY_MESSAGE;
+    signTx_handleDHStart_ui_runStep();
+}
+
+// ======================= END DH ENCODING ===========================
+
+enum {
+    HANDLE_DH_END_STEP_CONFIRM = 900,
+    HANDLE_DH_END_STEP_RESPOND,
+    HANDLE_DH_END_STEP_INVALID,
+};
+
+static void signTx_handleDHEnd_ui_runStep() {
+    TRACE("UI step %d", ctx->ui_step);
+    TRACE_STACK_USAGE();
+    ui_callback_fn_t* this_fn = signTx_handleDHEnd_ui_runStep;
+
+    UI_STEP_BEGIN(ctx->ui_step, this_fn);
+
+    UI_STEP(HANDLE_DH_END_STEP_CONFIRM) {
+        ui_displayPrompt("Encrypt content?", "", this_fn, respond_with_user_reject);
+    }
+
+    UI_STEP(HANDLE_DH_END_STEP_RESPOND) {
+        io_send_buf(SUCCESS, G_io_apdu_buffer, ctx->responseLength);
+        ui_displayBusy();  // needs to happen after I/O
+    }
+
+    UI_STEP_END(HANDLE_DH_END_STEP_INVALID);
+}
+
+__noinline_due_to_stack__ void signTx_handleEndDHEncodingAPDU(
+    uint8_t p2,
+    MARK_UNUSED_NO_DEVEL uint8_t* constDataBuffer,
+    size_t constSize,
+    MARK_UNUSED_NO_DEVEL uint8_t* varDataBuffer,
+    size_t varSize) {
+    // Sanity checks and trace buffers
+    TRACE_STACK_USAGE();
+    {
+        VALIDATE(p2 == P2_UNUSED, ERR_INVALID_REQUEST_PARAMETERS);
+        TRACE_BUFFER(constDataBuffer, constSize);
+        TRACE_BUFFER(varDataBuffer, varSize);
+    }
+
+    // Data format
+    {
+        VALIDATE(constSize == 0, ERR_INVALID_DATA);
+        VALIDATE(varSize == 0, ERR_INVALID_DATA);
+    }
+
+    // Preparing display variables ctx->key, ctx->value
+    {
+        snprintf(ctx->key, MAX_DISPLAY_KEY_LENGTH, "Our Public Key");
+        prepareOurPubkeyForDisplay();
+    }
+
+    // Reading data finished, from now on we use G_io_apdu_buffer for output
+    {
+        // Apend data to hash (final blocks of DH encryption) and prepare response
+        {
+            // To be sure that we are encoding correct DH data
+            VALIDATE(integrityCheckEvaluate(&ctx->integrity), ERR_INTEGRITY_CHECK_FAILED);
+
+            VALIDATE(ctx->dhIsActive, ERR_INVALID_STATE);
+            // Counted section that started within DH encoding cannot end after DH encoding
+            VALIDATE(ctx->dhCountedSectionEntryLevel == ctx->countedSections.currentLevel,
+                     ERR_INVALID_STATE);
+
+            dh_aes_key_t aesKey;
+            BEGIN_TRY {
+                TRY {
+                    // Compute AES key
+                    dh_init_aes_key(&aesKey, &ctx->wittnessPath, &ctx->otherPubkey);
+
+                    ctx->responseLength = dh_encode_finalize(&ctx->dhContext,
+                                                             &aesKey,
+                                                             G_io_apdu_buffer,
+                                                             SIZEOF(G_io_apdu_buffer));
+                }
+                FINALLY {
+                    explicit_bzero(&aesKey, SIZEOF(aesKey));
+                }
+            }
+            END_TRY;
+
+            ctx->countedSectionDifference += ctx->responseLength;
+            TRACE("CS diff %d from:%d",
+                  (int) ctx->countedSectionDifference,
+                  (int) ctx->responseLength);
+            VALIDATE(countedSectionProcess(&ctx->countedSections, ctx->countedSectionDifference),
+                     ERR_INVALID_STATE);
+
+            sha_256_append(&ctx->hashContext, G_io_apdu_buffer, ctx->responseLength);
+            ctx->dhIsActive = false;
+        }
+
+        // Security policy
+        {
+            security_policy_t policy = POLICY_DENY;
+            policy = policyForSignTxDHEnd();
+            TRACE("Policy: %d", (int) policy);
+            ENSURE_NOT_DENIED(policy);
+            // select UI step
+            if (policy == POLICY_PROMPT_BEFORE_RESPONSE) {
+                ctx->ui_step = HANDLE_DH_END_STEP_CONFIRM;
+            } else {
+                THROW(ERR_NOT_IMPLEMENTED);
+            }
+        }
+    }
+
+    signTx_handleDHEnd_ui_runStep();
+}
+
+// ============================== FINISH ==============================
+
+enum {
+    HANDLE_FINISH_STEP_DISPLAY_DETAILS = 1000,
+    HANDLE_FINISH_STEP_CONFIRM,
+    HANDLE_FINISH_STEP_RESPOND,
+    HANDLE_FINISH_STEP_INVALID,
+};
+
+static void signTx_handleFinish_ui_runStep() {
+    TRACE("UI step %d", ctx->ui_step);
+    TRACE_STACK_USAGE();
+    ui_callback_fn_t* this_fn = signTx_handleFinish_ui_runStep;
+
+    UI_STEP_BEGIN(ctx->ui_step, this_fn);
+
+    UI_STEP(HANDLE_FINISH_STEP_DISPLAY_DETAILS) {
+        ui_displayPaginatedText(ctx->key, ctx->value, this_fn);
+    }
+
+    UI_STEP(HANDLE_FINISH_STEP_CONFIRM) {
         ui_displayPrompt("Sign", "transaction?", this_fn, respond_with_user_reject);
     }
 
-    UI_STEP(HANDLE_WITNESS_STEP_RESPOND) {
-        io_send_buf(SUCCESS, G_io_apdu_buffer, 65 + 32);
+    UI_STEP(HANDLE_FINISH_STEP_RESPOND) {
+        io_send_buf(SUCCESS, G_io_apdu_buffer, PUBKEY_LENGTH + SHA_256_SIZE);
         ui_displayBusy();  // needs to happen after I/O
-        advanceStage();
+        ui_idle();         // we are done with this tx
     }
 
-    UI_STEP_END(HANDLE_WITNESS_STEP_INVALID);
+    UI_STEP_END(HANDLE_FINISH_STEP_INVALID);
 }
 
-__noinline_due_to_stack__ void signTx_handleWitnessAPDU(uint8_t p2,
-                                                        uint8_t* wireDataBuffer,
-                                                        size_t wireDataSize) {
+__noinline_due_to_stack__ void signTx_handleFinishAPDU(
+    uint8_t p2,
+    MARK_UNUSED_NO_DEVEL uint8_t* constDataBuffer,
+    size_t constSize,
+    MARK_UNUSED_NO_DEVEL uint8_t* varDataBuffer,
+    size_t varSize) {
+    // Sanity checks and trace buffers
     TRACE_STACK_USAGE();
     {
-        // sanity checks
-        CHECK_STAGE(SIGN_STAGE_WITNESS);
         VALIDATE(p2 == P2_UNUSED, ERR_INVALID_REQUEST_PARAMETERS);
-        ASSERT(wireDataSize < BUFFER_SIZE_PARANOIA);
+        TRACE_BUFFER(constDataBuffer, constSize);
+        TRACE_BUFFER(varDataBuffer, varSize);
     }
 
-    explicit_bzero(&ctx->wittnessPath, SIZEOF(ctx->wittnessPath));
-
+    // Data format
     {
-        // parse
-        TRACE_BUFFER(wireDataBuffer, wireDataSize);
-
-        size_t parsedSize = bip44_parseFromWire(&ctx->wittnessPath, wireDataBuffer, wireDataSize);
-        VALIDATE(parsedSize == wireDataSize, ERR_INVALID_DATA);
+        VALIDATE(constSize == 0, ERR_INVALID_DATA);
+        VALIDATE(varSize == 0, ERR_INVALID_DATA);
     }
 
+    // Preparing display variables ctx->key, ctx->value
+    {
+        snprintf(ctx->key, MAX_DISPLAY_KEY_LENGTH, "Sign with");
+        prepareOurPubkeyForDisplay();
+    }
+
+    // Reading data finished, from now on we use G_io_apdu_buffer for output
+
+    // Hash - this is the last call, we finalize it + counted sections
+    uint8_t hashBuf[SHA_256_SIZE];
+    explicit_bzero(hashBuf, SIZEOF(hashBuf));
+    {
+        sha_256_finalize(&ctx->hashContext, hashBuf, SIZEOF(hashBuf));
+        TRACE("SHA_256_finalize, resulting hash:");
+        TRACE_BUFFER(hashBuf, SHA_256_SIZE);
+    }
+
+    // This is the last call - we need to check integrity of the command sequence + just for good
+    // measures we finalize counted section
+    {
+        VALIDATE(!ctx->dhIsActive, ERR_INVALID_STATE);
+        VALIDATE(integrityCheckEvaluate(&ctx->integrity), ERR_INTEGRITY_CHECK_FAILED);
+        VALIDATE(countedSectionFinalize(&ctx->countedSections), ERR_INVALID_DATA);
+    }
+
+    // Security policy
     security_policy_t policy = POLICY_DENY;
     {
-        // get policy
-        policy = policyForSignTxWitness(&ctx->wittnessPath);
+        policy = policyForSignTxFinish();
         TRACE("Policy: %d", (int) policy);
         ENSURE_NOT_DENIED(policy);
+        // select UI step
+        if (policy == POLICY_PROMPT_BEFORE_RESPONSE) {
+            ctx->ui_step = HANDLE_FINISH_STEP_DISPLAY_DETAILS;
+        } else {
+            THROW(ERR_NOT_IMPLEMENTED);
+        }
     }
 
-    // Extension points
-    uint8_t buf[1];
-    explicit_bzero(buf, SIZEOF(buf));
-    sha_256_append(&ctx->hashContext, buf, SIZEOF(buf));
-
-    // We finish the hash appending a 32-byte empty buffer
-    uint8_t hashBuf[32];
-    explicit_bzero(hashBuf, SIZEOF(hashBuf));
-    sha_256_append(&ctx->hashContext, hashBuf, SIZEOF(hashBuf));
-
-    // we get the resulting hash
-    sha_256_finalize(&ctx->hashContext, hashBuf, SIZEOF(hashBuf));
-    TRACE("SHA_256_finalize, resulting hash:");
-    TRACE_BUFFER(hashBuf, 32);
-
-    // We derive the private key
+    // Derive keys and sign the transaction, setup
     private_key_t privateKey;
-    derivePrivateKey(&ctx->wittnessPath, &privateKey);
-    TRACE("privateKey.d:");
-    TRACE_BUFFER(privateKey.d, privateKey.d_len);
-
-    // We want to show pubkey, thus we derive it
-    derivePublicKey(&ctx->wittnessPath, &ctx->wittnessPathPubkey);
-    TRACE_BUFFER(ctx->wittnessPathPubkey.W, SIZEOF(ctx->wittnessPathPubkey.W));
-
-    // We sign the hash
-    // Code producing signatures is taken from EOS app
-    uint8_t V[33];
-    uint8_t K[32];
-    int tries = 0;
-
-    // Loop until a candidate matching the canonical signature is found
-    // Taken from EOS app
-    // We use G_io_apdu_buffer to save memory (and also to minimize changes to EOS code)
-    // The code produces the signature right where we need it for the respons
+    explicit_bzero(&privateKey, SIZEOF(privateKey));
     BEGIN_TRY {
         TRY {
+            // We derive the private key
+            {
+                derivePrivateKey(&ctx->wittnessPath, &privateKey);
+                TRACE("privateKey.d:");
+                TRACE_BUFFER(privateKey.d, privateKey.d_len);
+            }
+
+            // We sign the hash
+            // Code producing signatures is taken from EOS app
+            uint8_t V[33];
+            uint8_t K[32];
+            int tries = 0;
+
+            // Loop until a candidate matching the canonical signature is found
+            // Taken from EOS app
+            // We use G_io_apdu_buffer to save memory (and also to minimize changes to EOS code)
+            // The code produces the signature right where we need it for the respons
             explicit_bzero(G_io_apdu_buffer, SIZEOF(G_io_apdu_buffer));
             for (;;) {
                 if (tries == 0) {
@@ -743,51 +996,38 @@ __noinline_due_to_stack__ void signTx_handleWitnessAPDU(uint8_t p2,
                 }
                 G_io_apdu_buffer[0] = 27 + 4 + (G_io_apdu_buffer[100] & 0x01);
                 ecdsa_der_to_sig(G_io_apdu_buffer + 100, G_io_apdu_buffer + 1);
-                TRACE_BUFFER(G_io_apdu_buffer, 65);
+                TRACE_BUFFER(G_io_apdu_buffer, PUBKEY_LENGTH);
 
                 if (check_canonical(G_io_apdu_buffer + 1)) {
+                    TRACE("Try %d succesfull!", tries);
                     break;
                 } else {
-                    TRACE(
-                        "Try %d unsuccesfull! We will not get correct "
-                        "signature!!!!!!!!!!!!!!!!!!!!!!!!!",
-                        tries);
+                    TRACE("Try %d unsuccesfull!", tries);
                     tries++;
                 }
             }
         }
         FINALLY {
-            memset(&privateKey, 0, sizeof(privateKey));
+            explicit_bzero(&privateKey, sizeof(privateKey));
         }
     }
     END_TRY;
 
     // We add hash to the response
     TRACE("ecdsa_der_to_sig_result:");
-    TRACE_BUFFER(G_io_apdu_buffer, 65);
-    memcpy(G_io_apdu_buffer + 65, hashBuf, 32);
+    TRACE_BUFFER(G_io_apdu_buffer, PUBKEY_LENGTH);
+    memcpy(G_io_apdu_buffer + PUBKEY_LENGTH, hashBuf, SHA_256_SIZE);
 
-    {
-        // select UI steps
-        switch (policy) {
-#define CASE(POLICY, UI_STEP)   \
-    case POLICY: {              \
-        ctx->ui_step = UI_STEP; \
-        break;                  \
-    }
-            CASE(POLICY_PROMPT_BEFORE_RESPONSE, HANDLE_WITNESS_STEP_DISPLAY_DETAILS);
-#undef CASE
-            default:
-                THROW(ERR_NOT_IMPLEMENTED);
-        }
-    }
-
-    signTx_handleWitness_ui_runStep();
+    signTx_handleFinish_ui_runStep();
 }
 
 // ============================== MAIN HANDLER ==============================
 
-typedef void subhandler_fn_t(uint8_t p2, uint8_t* dataBuffer, size_t dataSize);
+typedef void subhandler_fn_t(uint8_t p2,
+                             uint8_t* constDataBuffer,
+                             size_t constSize,
+                             uint8_t* varDataBuffer,
+                             size_t varSize);
 
 static subhandler_fn_t* lookup_subhandler(uint8_t p1) {
     switch (p1) {
@@ -798,11 +1038,15 @@ static subhandler_fn_t* lookup_subhandler(uint8_t p1) {
     default:             \
         return HANDLER;
         CASE(0x01, signTx_handleInitAPDU);
-        CASE(0x02, signTx_handleHeaderAPDU);
-        CASE(0x03, signTx_handleActionHeaderAPDU);
-        CASE(0x04, signTx_handleActionAuthorizationAPDU);
-        CASE(0x05, signTx_handleActionDataAPDU);
-        CASE(0x10, signTx_handleWitnessAPDU);
+        CASE(0x02, signTx_handleAppendConstDataAPDU);
+        CASE(0x03, signTx_handleShowMessageAPDU);
+        CASE(0x04, signTx_handleAppendDataAPDU);
+        CASE(0x05, signTx_handleStartCountedSectionAPDU);
+        CASE(0x06, signTx_handleEndCountedSectionAPDU);
+        CASE(0x07, signTx_handleStoreValueAPDU);
+        CASE(0x08, signTx_handleStartDHEncodingAPDU);
+        CASE(0x09, signTx_handleEndDHEncodingAPDU);
+        CASE(0x10, signTx_handleFinishAPDU);
         DEFAULT(NULL)
 #undef CASE
 #undef DEFAULT
@@ -815,13 +1059,41 @@ void signTransaction_handleAPDU(uint8_t p1,
                                 size_t wireDataSize,
                                 bool isNewCall) {
     TRACE("P1 = 0x%x, P2 = 0x%x, isNewCall = %d", p1, p2, isNewCall);
+    TRACE_STACK_USAGE();
 
     if (isNewCall) {
         explicit_bzero(ctx, SIZEOF(*ctx));
-        ctx->stage = SIGN_STAGE_INIT;
+        TRACE("SHA_256_init");
+        sha_256_init(&ctx->hashContext);
+        TRACE("Integrity check init");
+        integrityCheckInit(&ctx->integrity);
+        TRACE("Counted sections init");
+        countedSectionInit(&ctx->countedSections);
+        TRACE("Storage init");
+        explicit_bzero(&ctx->storage, SIZEOF(ctx->storage));
+        ctx->storage.initialized_magic = TX_STORAGE_INITIALIZED_MAGIC;
+        TRACE("DH inactive");
+        ctx->dhIsActive = false;
+        ctx->initWasCalledMagic = TX_INIT_WAS_CALLED_INITIALIZED_MAGIC;
+    }
+    VALIDATE(TX_INIT_WAS_CALLED_INITIALIZED_MAGIC, ERR_INVALID_DATA);
+
+    // Parse APDU into const and non-const part
+    ASSERT(wireDataSize < BUFFER_SIZE_PARANOIA);
+    VALIDATE(wireDataSize >= 2, ERR_INVALID_DATA);
+    uint8_t constantDataLen = wireDataBuffer[0];
+    uint8_t variableDataLen = wireDataBuffer[1];
+    VALIDATE(wireDataSize >= (size_t) 2 + constantDataLen + variableDataLen, ERR_INVALID_DATA);
+    uint8_t* constantData = wireDataBuffer + 2;
+    uint8_t* variableData = constantData + constantDataLen;
+
+    {
+        // Update integrity and transaction hash
+        integrityCheckProcessInstruction(&ctx->integrity, p1, p2, constantData, constantDataLen);
     }
 
     subhandler_fn_t* subhandler = lookup_subhandler(p1);
     VALIDATE(subhandler != NULL, ERR_INVALID_REQUEST_PARAMETERS);
-    subhandler(p2, wireDataBuffer, wireDataSize);
+
+    subhandler(p2, constantData, constantDataLen, variableData, variableDataLen);
 }

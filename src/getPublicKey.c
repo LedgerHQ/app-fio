@@ -14,24 +14,6 @@ static ins_get_key_context_t* ctx = &(instructionState.getKeyContext);
 // it should be set to this value at the beginning and after a UI state machine is finished
 static int UI_STEP_NONE = 0;
 
-static inline void CHECK_STAGE(get_key_stage_t expected) {
-    VALIDATE(ctx->stage == expected, ERR_INVALID_STATE);
-}
-
-static void advanceStage() {
-    TRACE("Advancing from stage: %d", ctx->stage);
-
-    switch (ctx->stage) {
-        case GET_KEY_STAGE_INIT:
-            ctx->stage = GET_KEY_STAGE_NONE;
-            ui_idle();  // we are done with this key export
-            break;
-
-        default:
-            ASSERT(false);
-    }
-}
-
 // ============================== Derivation and UI state machine ==============================
 
 enum {
@@ -77,7 +59,7 @@ static void getPublicKey_ui_runStep() {
 
         TRACE("Export done.");
 
-        advanceStage();
+        ui_idle();  // we are done with this key export
     }
     UI_STEP_END(GET_KEY_UI_STEP_INVALID);
 }
@@ -128,10 +110,8 @@ void getPublicKey_handleAPDU(uint8_t p1,
     VALIDATE(p2 == P2_UNUSED, ERR_INVALID_REQUEST_PARAMETERS);
 
     explicit_bzero(ctx, SIZEOF(*ctx));
-    ctx->stage = GET_KEY_STAGE_INIT;
     ctx->ui_step = UI_STEP_NONE;
 
-    CHECK_STAGE(GET_KEY_STAGE_INIT);
     ASSERT(wireDataSize < BUFFER_SIZE_PARANOIA);
 
     {
@@ -141,6 +121,8 @@ void getPublicKey_handleAPDU(uint8_t p1,
         TRACE_BUFFER(wireDataBuffer, wireDataSize);
 
         size_t parsedSize = bip44_parseFromWire(&ctx->pathSpec, wireDataBuffer, wireDataSize);
+        BIP44_PRINTF(&ctx->pathSpec);
+        PRINTF("\n");
         VALIDATE(parsedSize == wireDataSize, ERR_INVALID_DATA);
     }
 

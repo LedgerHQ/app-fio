@@ -39,38 +39,31 @@ security_policy_t policyForGetPublicKey(const bip44_path_t* pathSpec, get_key_p1
     ALLOW();
 }
 
-security_policy_t policyForSignTxInit(network_type_t network) {
-    DENY_IF(network == NETWORK_UNKNOWN);
-    SHOW();
-}
-
-security_policy_t policyForSignTxHeader() {
-    SHOW();
-}
-
-security_policy_t policyForSignTxActionHeader(action_type_t action) {
-    DENY_IF(action == ACTION_TYPE_UNKNOWN);
-    SHOW();
-}
-
-security_policy_t policyForSignTxActionAuthorization() {
-    SHOW();
-}
-
-security_policy_t policyForSignTxActionData(char* validation_actor, char* data_actor) {
-    DENY_IF(strncmp(validation_actor, data_actor, NAME_STRING_MAX_LENGTH))
-    SHOW();
-}
-
-security_policy_t policyForSignTxWitness(const bip44_path_t* pathSpec) {
+security_policy_t policyForSignTxInit(const bip44_path_t* pathSpec) {
     DENY_UNLESS(bip44_hasValidFIOPrefix(pathSpec));
     DENY_UNLESS(bip44_containsAddress(pathSpec));
     DENY_IF(bip44_containsMoreThanAddress(pathSpec));
 
+    SHOW();
+}
+
+security_policy_t policyForSignTxDHEnd() {
+    PROMPT();
+}
+
+security_policy_t policyForSignTxFinish() {
     PROMPT();
 }
 
 security_policy_t policyDerivePrivateKey(const bip44_path_t* pathSpec) {
+    DENY_UNLESS(bip44_hasValidFIOPrefix(pathSpec));
+    DENY_UNLESS(bip44_containsAddress(pathSpec));
+    DENY_IF(bip44_containsMoreThanAddress(pathSpec));
+
+    ALLOW();
+}
+
+security_policy_t policyForDecodeDHDecode(const bip44_path_t* pathSpec) {
     DENY_UNLESS(bip44_hasValidFIOPrefix(pathSpec));
     DENY_UNLESS(bip44_containsAddress(pathSpec));
     DENY_IF(bip44_containsMoreThanAddress(pathSpec));

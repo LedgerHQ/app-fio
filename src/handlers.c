@@ -4,6 +4,7 @@
 #include <stdlib.h>
 
 #include "handlers.h"
+#include "decodeDH.h"
 #include "getVersion.h"
 #include "getSerial.h"
 #include "getPublicKey.h"
@@ -27,6 +28,9 @@ handler_fn_t* lookupHandler(uint8_t ins) {
 
         // 0x2* -  transaction related
         CASE(0x20, signTransaction_handleAPDU);
+
+        // 0x3* -  transaction related
+        CASE(0x30, decode_handleAPDU);
 
 #ifdef DEVEL
         // 0xF* -  debug_mode related

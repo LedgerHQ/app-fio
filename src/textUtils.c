@@ -37,7 +37,7 @@ size_t str_formatFIOAmount(uint64_t amount, char* out, size_t outSize) {
 
     // Size without terminating character
     STATIC_ASSERT(sizeof(ptr - scratchBuffer) == sizeof(size_t), "bad size_t size");
-    size_t rawSize = (size_t)(ptr - scratchBuffer);
+    size_t rawSize = (size_t) (ptr - scratchBuffer);
 
     const char* suffix = " FIO";
     const size_t suffixLength = strlen(suffix);
@@ -76,7 +76,7 @@ size_t str_formatUint64(uint64_t number, char* out, size_t outSize) {
 
     // Size without terminating character
     STATIC_ASSERT(sizeof(ptr - scratchBuffer) == sizeof(size_t), "bad size_t size");
-    size_t rawSize = (size_t)(ptr - scratchBuffer);
+    size_t rawSize = (size_t) (ptr - scratchBuffer);
 
     if (rawSize + 1 > outSize) {
         THROW(ERR_DATA_TOO_LARGE);
