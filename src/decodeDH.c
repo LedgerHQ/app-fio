@@ -122,78 +122,62 @@ static void decodeNewfundsreqMemo_ui_runStep() {
 }
 
 enum {
-    DECODE_NEWFUNDSREQ_HASH_UI_STEP_MESSAGE1 = 250,
-    DECODE_NEWFUNDSREQ_HASH_UI_STEP_MESSAGE2,
-    DECODE_NEWFUNDSREQ_HASH_UI_STEP_PAYEE_PUBLIC_ADDRESS,
-    DECODE_NEWFUNDSREQ_HASH_UI_STEP_AMOUNT,
-    DECODE_NEWFUNDSREQ_HASH_UI_STEP_CHAIN_CODE,
-    DECODE_NEWFUNDSREQ_HASH_UI_STEP_TOKEN_CODE,
-    DECODE_NEWFUNDSREQ_HASH_UI_STEP_HASH,
-    DECODE_NEWFUNDSREQ_HASH_UI_STEP_OFFLINE_URL,
-    DECODE_NEWFUNDSREQ_HASH_UI_STEP_CONFIRM,
-    DECODE_NEWFUNDSREQ_HASH_UI_STEP_RESPOND,
-    DECODE_NEWFUNDSREQ_HASH_UI_STEP_INVALID,
+    DECODE_NEWFUNDSREQ_NOMEMO_UI_STEP_MESSAGE1 = 250,
+    DECODE_NEWFUNDSREQ_NOMEMO_UI_STEP_MESSAGE2,
+    DECODE_NEWFUNDSREQ_NOMEMO_UI_STEP_PAYEE_PUBLIC_ADDRESS,
+    DECODE_NEWFUNDSREQ_NOMEMO_UI_STEP_AMOUNT,
+    DECODE_NEWFUNDSREQ_NOMEMO_UI_STEP_CHAIN_CODE,
+    DECODE_NEWFUNDSREQ_NOMEMO_UI_STEP_TOKEN_CODE,
+    DECODE_NEWFUNDSREQ_NOMEMO_UI_STEP_CONFIRM,
+    DECODE_NEWFUNDSREQ_NOMEMO_UI_STEP_RESPOND,
+    DECODE_NEWFUNDSREQ_NOMEMO_UI_STEP_INVALID,
 };
 
-static void decodeNewfundsreqHash_ui_runStep() {
+static void decodeNewfundsreqNoMemo_ui_runStep() {
     TRACE("UI step %d", ctx->ui_step);
-    ui_callback_fn_t *this_fn = decodeNewfundsreqHash_ui_runStep;
+    ui_callback_fn_t *this_fn = decodeNewfundsreqNoMemo_ui_runStep;
 
     UI_STEP_BEGIN(ctx->ui_step, this_fn);
 
-    UI_STEP(DECODE_NEWFUNDSREQ_HASH_UI_STEP_MESSAGE1) {
+    UI_STEP(DECODE_NEWFUNDSREQ_NOMEMO_UI_STEP_MESSAGE1) {
         ui_displayPaginatedText("Decrypt content", "", this_fn);
     }
-    UI_STEP(DECODE_NEWFUNDSREQ_HASH_UI_STEP_MESSAGE2) {
+    UI_STEP(DECODE_NEWFUNDSREQ_NOMEMO_UI_STEP_MESSAGE2) {
         ui_displayPaginatedText("Interpreting", "the message as Request funds", this_fn);
     }
-    UI_STEP(DECODE_NEWFUNDSREQ_HASH_UI_STEP_PAYEE_PUBLIC_ADDRESS) {
+    UI_STEP(DECODE_NEWFUNDSREQ_NOMEMO_UI_STEP_PAYEE_PUBLIC_ADDRESS) {
         ui_displayAsciiBufferScreen("Payee public address",
                                     ctx->parsedContent.payee_public_address->data,
                                     ctx->parsedContent.payee_public_address->length,
                                     this_fn);
     }
-    UI_STEP(DECODE_NEWFUNDSREQ_HASH_UI_STEP_AMOUNT) {
+    UI_STEP(DECODE_NEWFUNDSREQ_NOMEMO_UI_STEP_AMOUNT) {
         ui_displayAsciiBufferScreen("Amount",
                                     ctx->parsedContent.amount->data,
                                     ctx->parsedContent.amount->length,
                                     this_fn);
     }
-    UI_STEP(DECODE_NEWFUNDSREQ_HASH_UI_STEP_CHAIN_CODE) {
+    UI_STEP(DECODE_NEWFUNDSREQ_NOMEMO_UI_STEP_CHAIN_CODE) {
         ui_displayAsciiBufferScreen("Chain code",
                                     ctx->parsedContent.chain_code->data,
                                     ctx->parsedContent.chain_code->length,
                                     this_fn);
     }
-    UI_STEP(DECODE_NEWFUNDSREQ_HASH_UI_STEP_TOKEN_CODE) {
+    UI_STEP(DECODE_NEWFUNDSREQ_NOMEMO_UI_STEP_TOKEN_CODE) {
         ui_displayAsciiBufferScreen("Token code",
                                     ctx->parsedContent.token_code->data,
                                     ctx->parsedContent.token_code->length,
                                     this_fn);
     }
-    UI_STEP(DECODE_NEWFUNDSREQ_HASH_UI_STEP_HASH) {
-        ASSERT(ctx->parsedContent.hash != NULL);
-        ui_displayAsciiBufferScreen("Hash",
-                                    ctx->parsedContent.hash->data,
-                                    ctx->parsedContent.hash->length,
-                                    this_fn);
-    }
-    UI_STEP(DECODE_NEWFUNDSREQ_HASH_UI_STEP_OFFLINE_URL) {
-        ASSERT(ctx->parsedContent.offline_url != NULL);
-        ui_displayAsciiBufferScreen("Offline URL",
-                                    ctx->parsedContent.offline_url->data,
-                                    ctx->parsedContent.offline_url->length,
-                                    this_fn);
-    }
-    UI_STEP(DECODE_NEWFUNDSREQ_HASH_UI_STEP_CONFIRM) {
+    UI_STEP(DECODE_NEWFUNDSREQ_NOMEMO_UI_STEP_CONFIRM) {
         ui_displayPrompt("Confirm", "response", this_fn, dh_respond_with_user_reject);
     }
-    UI_STEP(DECODE_NEWFUNDSREQ_HASH_UI_STEP_RESPOND) {
+    UI_STEP(DECODE_NEWFUNDSREQ_NOMEMO_UI_STEP_RESPOND) {
         io_send_buf(SUCCESS, NULL, 0);
         ui_displayBusy();  // needs to happen after I/O
         ctx->stage = DECODE_STAGE_SEND_REST;
     }
-    UI_STEP_END(DECODE_NEWFUNDSREQ_HASH_UI_STEP_INVALID);
+    UI_STEP_END(DECODE_NEWFUNDSREQ_NOMEMO_UI_STEP_INVALID);
 }
 
 // Parse newfundsreq data
@@ -210,18 +194,17 @@ static void decodeNewfundsreqUIFlow() {
     readOptionalStringWithLength(&read, &ctx->parsedContent.hash);
     readOptionalStringWithLength(&read, &ctx->parsedContent.offline_url);
     VALIDATE(read == ctx->bufferLen, ERR_INVALID_DATA);
+    bool hasMemo = (ctx->parsedContent.memo != NULL);
+    bool hasHash = (ctx->parsedContent.hash != NULL);
+    bool hasOfflineUrl = (ctx->parsedContent.offline_url != NULL);
+    VALIDATE((hasHash && hasOfflineUrl) || (!hasHash && !hasOfflineUrl), ERR_INVALID_DATA);
 
-    if (ctx->parsedContent.memo != NULL && ctx->parsedContent.hash == NULL &&
-        ctx->parsedContent.offline_url == NULL) {
+    if (hasMemo) {
         ctx->ui_step = DECODE_NEWFUNDSREQ_MEMO_UI_STEP_MESSAGE1;
         decodeNewfundsreqMemo_ui_runStep();
-    } else if (ctx->parsedContent.memo == NULL && ctx->parsedContent.hash != NULL &&
-               ctx->parsedContent.offline_url != NULL) {
-        ctx->ui_step = DECODE_NEWFUNDSREQ_HASH_UI_STEP_MESSAGE1;
-        decodeNewfundsreqHash_ui_runStep();
-
     } else {
-        THROW(ERR_INVALID_DATA);
+        ctx->ui_step = DECODE_NEWFUNDSREQ_NOMEMO_UI_STEP_MESSAGE1;
+        decodeNewfundsreqNoMemo_ui_runStep();
     }
 }
 
@@ -318,101 +301,85 @@ static void decodeRecordobtMemo_ui_runStep() {
 }
 
 enum {
-    DECODE_RECORDOBT_HASH_UI_STEP_MESSAGE1 = 350,
-    DECODE_RECORDOBT_HASH_UI_STEP_MESSAGE2,
-    DECODE_RECORDOBT_HASH_UI_STEP_PAYEE_PUBLIC_ADDRESS,
-    DECODE_RECORDOBT_HASH_UI_STEP_PAYER_PUBLIC_ADDRESS,
-    DECODE_RECORDOBT_HASH_UI_STEP_AMOUNT,
-    DECODE_RECORDOBT_HASH_UI_STEP_CHAIN_CODE,
-    DECODE_RECORDOBT_HASH_UI_STEP_TOKEN_CODE,
-    DECODE_RECORDOBT_HASH_UI_STEP_STATUS,
-    DECODE_RECORDOBT_HASH_UI_STEP_OBT_ID,
-    DECODE_RECORDOBT_HASH_UI_STEP_HASH,
-    DECODE_RECORDOBT_HASH_UI_STEP_OFFLINE_URL,
-    DECODE_RECORDOBT_HASH_UI_STEP_CONFIRM,
-    DECODE_RECORDOBT_HASH_UI_STEP_RESPOND,
-    DECODE_RECORDOBT_HASH_UI_STEP_INVALID,
+    DECODE_RECORDOBT_NO_MEMO_UI_STEP_MESSAGE1 = 350,
+    DECODE_RECORDOBT_NO_MEMO_UI_STEP_MESSAGE2,
+    DECODE_RECORDOBT_NO_MEMO_UI_STEP_PAYEE_PUBLIC_ADDRESS,
+    DECODE_RECORDOBT_NO_MEMO_UI_STEP_PAYER_PUBLIC_ADDRESS,
+    DECODE_RECORDOBT_NO_MEMO_UI_STEP_AMOUNT,
+    DECODE_RECORDOBT_NO_MEMO_UI_STEP_CHAIN_CODE,
+    DECODE_RECORDOBT_NO_MEMO_UI_STEP_TOKEN_CODE,
+    DECODE_RECORDOBT_NO_MEMO_UI_STEP_STATUS,
+    DECODE_RECORDOBT_NO_MEMO_UI_STEP_OBT_ID,
+    DECODE_RECORDOBT_NO_MEMO_UI_STEP_CONFIRM,
+    DECODE_RECORDOBT_NO_MEMO_UI_STEP_RESPOND,
+    DECODE_RECORDOBT_NO_MEMO_UI_STEP_INVALID,
 };
 
-static void decodeRecordobtHash_ui_runStep() {
+static void decodeRecordobtNoMemo_ui_runStep() {
     TRACE("UI step %d", ctx->ui_step);
-    ui_callback_fn_t *this_fn = decodeRecordobtHash_ui_runStep;
+    ui_callback_fn_t *this_fn = decodeRecordobtNoMemo_ui_runStep;
 
     UI_STEP_BEGIN(ctx->ui_step, this_fn);
 
-    UI_STEP(DECODE_RECORDOBT_HASH_UI_STEP_MESSAGE1) {
+    UI_STEP(DECODE_RECORDOBT_NO_MEMO_UI_STEP_MESSAGE1) {
         ui_displayPaginatedText("Decrypt content", "", this_fn);
     }
-    UI_STEP(DECODE_RECORDOBT_HASH_UI_STEP_MESSAGE2) {
+    UI_STEP(DECODE_RECORDOBT_NO_MEMO_UI_STEP_MESSAGE2) {
         ui_displayPaginatedText("Interpreting",
                                 "the message as Record other blockchain transaction metadata",
                                 this_fn);
     }
-    UI_STEP(DECODE_RECORDOBT_HASH_UI_STEP_PAYEE_PUBLIC_ADDRESS) {
+    UI_STEP(DECODE_RECORDOBT_NO_MEMO_UI_STEP_PAYEE_PUBLIC_ADDRESS) {
         ui_displayAsciiBufferScreen("Payee public address",
                                     ctx->parsedContent.payee_public_address->data,
                                     ctx->parsedContent.payee_public_address->length,
                                     this_fn);
     }
-    UI_STEP(DECODE_RECORDOBT_HASH_UI_STEP_PAYER_PUBLIC_ADDRESS) {
+    UI_STEP(DECODE_RECORDOBT_NO_MEMO_UI_STEP_PAYER_PUBLIC_ADDRESS) {
         ui_displayAsciiBufferScreen("Payer public address",
                                     ctx->parsedContent.payer_public_address->data,
                                     ctx->parsedContent.payer_public_address->length,
                                     this_fn);
     }
-    UI_STEP(DECODE_RECORDOBT_HASH_UI_STEP_AMOUNT) {
+    UI_STEP(DECODE_RECORDOBT_NO_MEMO_UI_STEP_AMOUNT) {
         ui_displayAsciiBufferScreen("Amount",
                                     ctx->parsedContent.amount->data,
                                     ctx->parsedContent.amount->length,
                                     this_fn);
     }
-    UI_STEP(DECODE_RECORDOBT_HASH_UI_STEP_CHAIN_CODE) {
+    UI_STEP(DECODE_RECORDOBT_NO_MEMO_UI_STEP_CHAIN_CODE) {
         ui_displayAsciiBufferScreen("Chain code",
                                     ctx->parsedContent.chain_code->data,
                                     ctx->parsedContent.chain_code->length,
                                     this_fn);
     }
-    UI_STEP(DECODE_RECORDOBT_HASH_UI_STEP_TOKEN_CODE) {
+    UI_STEP(DECODE_RECORDOBT_NO_MEMO_UI_STEP_TOKEN_CODE) {
         ui_displayAsciiBufferScreen("Token code",
                                     ctx->parsedContent.token_code->data,
                                     ctx->parsedContent.token_code->length,
                                     this_fn);
     }
-    UI_STEP(DECODE_RECORDOBT_HASH_UI_STEP_STATUS) {
+    UI_STEP(DECODE_RECORDOBT_NO_MEMO_UI_STEP_STATUS) {
         ui_displayAsciiBufferScreen("Status",
                                     ctx->parsedContent.status->data,
                                     ctx->parsedContent.status->length,
                                     this_fn);
     }
-    UI_STEP(DECODE_RECORDOBT_HASH_UI_STEP_OBT_ID) {
+    UI_STEP(DECODE_RECORDOBT_NO_MEMO_UI_STEP_OBT_ID) {
         ui_displayAsciiBufferScreen("Obt ID",
                                     ctx->parsedContent.obt_id->data,
                                     ctx->parsedContent.obt_id->length,
                                     this_fn);
     }
-    UI_STEP(DECODE_RECORDOBT_HASH_UI_STEP_HASH) {
-        ASSERT(ctx->parsedContent.hash != NULL);
-        ui_displayAsciiBufferScreen("Hash",
-                                    ctx->parsedContent.hash->data,
-                                    ctx->parsedContent.hash->length,
-                                    this_fn);
-    }
-    UI_STEP(DECODE_RECORDOBT_HASH_UI_STEP_OFFLINE_URL) {
-        ASSERT(ctx->parsedContent.offline_url != NULL);
-        ui_displayAsciiBufferScreen("Offline URL",
-                                    ctx->parsedContent.offline_url->data,
-                                    ctx->parsedContent.offline_url->length,
-                                    this_fn);
-    }
-    UI_STEP(DECODE_RECORDOBT_HASH_UI_STEP_CONFIRM) {
+    UI_STEP(DECODE_RECORDOBT_NO_MEMO_UI_STEP_CONFIRM) {
         ui_displayPrompt("Confirm", "response", this_fn, dh_respond_with_user_reject);
     }
-    UI_STEP(DECODE_RECORDOBT_HASH_UI_STEP_RESPOND) {
+    UI_STEP(DECODE_RECORDOBT_NO_MEMO_UI_STEP_RESPOND) {
         io_send_buf(SUCCESS, NULL, 0);
         ui_displayBusy();  // needs to happen after I/O
         ctx->stage = DECODE_STAGE_SEND_REST;
     }
-    UI_STEP_END(DECODE_RECORDOBT_HASH_UI_STEP_INVALID);
+    UI_STEP_END(DECODE_RECORDOBT_NO_MEMO_UI_STEP_INVALID);
 }
 
 // Parse newfundsreq data
@@ -432,18 +399,17 @@ static void decodeRecordobtUIFlow() {
     readOptionalStringWithLength(&read, &ctx->parsedContent.hash);
     readOptionalStringWithLength(&read, &ctx->parsedContent.offline_url);
     VALIDATE(read == ctx->bufferLen, ERR_INVALID_DATA);
+    bool hasMemo = (ctx->parsedContent.memo != NULL);
+    bool hasHash = (ctx->parsedContent.hash != NULL);
+    bool hasOfflineUrl = (ctx->parsedContent.offline_url != NULL);
+    VALIDATE((hasHash && hasOfflineUrl) || (!hasHash && !hasOfflineUrl), ERR_INVALID_DATA);
 
-    if (ctx->parsedContent.memo != NULL && ctx->parsedContent.hash == NULL &&
-        ctx->parsedContent.offline_url == NULL) {
+    if (hasMemo) {
         ctx->ui_step = DECODE_RECORDOBT_MEMO_UI_STEP_MESSAGE1;
         decodeRecordobtMemo_ui_runStep();
-    } else if (ctx->parsedContent.memo == NULL && ctx->parsedContent.hash != NULL &&
-               ctx->parsedContent.offline_url != NULL) {
-        ctx->ui_step = DECODE_RECORDOBT_HASH_UI_STEP_MESSAGE1;
-        decodeRecordobtHash_ui_runStep();
-
     } else {
-        THROW(ERR_INVALID_DATA);
+        ctx->ui_step = DECODE_RECORDOBT_NO_MEMO_UI_STEP_MESSAGE1;
+        decodeRecordobtNoMemo_ui_runStep();
     }
 }
 
