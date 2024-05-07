@@ -171,6 +171,41 @@ const txHash = {
     }],
 }
 
+const txAll = {
+    expiration: "2021-08-28T12:50:36.686",
+    ref_block_num: 0x1122,
+    ref_block_prefix: 0x33445566,
+    context_free_actions: [],
+    actions: [{
+        account: "fio.reqobt",
+        name: "recordobt",
+        authorization: [{
+            actor: "aftyershcu22",
+            permission: "active",
+        }],
+        data: {
+            fio_request_id: "",
+            payer_fio_address: "My payer address",
+            payee_fio_address:  "My payee address",
+            max_fee: 0x11223344,
+            tpid: "rewards@wallet",
+            actor: "aftyershcu22",
+
+            other_public_key: otherPublicKey.toUncompressed().toBuffer().toString("hex"),
+            payer_public_address: "My payer public address",
+            payee_public_address: "My payee public address",
+            amount: "amount 1000",
+            chain_code: "BTC",
+            token_code: "BTC",
+            status: "status",
+            obt_id: "obt ID",
+            memo: "I have memo",
+            hash: "I have hash",
+            offline_url: "I have url",
+        },
+    }],
+}
+
 //------------------- SERIALIZE TRANSACTION ------------------------------------------------
 
 async function buildTxUsingFioJs(network, tx, iv) {
@@ -295,7 +330,7 @@ testStep(" - - -", "Sign testnet mainnet - memo");
 
 testStep(" - - -", "Sign testnet transaction - hash");
 {
-    await runTxTest("TESTNET", txHash, longSequenceHash, secondSequence)
+    await runTxTest("TESTNET", txAll, longSequenceHash, secondSequence)
 }
 
 testStep(" - - -", "Sign testnet mainnet - hash");

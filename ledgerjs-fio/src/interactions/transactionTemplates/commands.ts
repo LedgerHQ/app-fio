@@ -413,30 +413,28 @@ export function ADD_STORAGE_CHECK(check: VALUE_STORAGE_COMPARE, c: Command): Com
     }
 }
 
-export function COMMAND_APPEND_DATA_MEMO_HASH(memo?: VarlenAsciiString, hash?: VarlenAsciiString, offline_url?: VarlenAsciiString): Command {
-    var varData: Buffer = Buffer.from("");
-    if (memo === undefined) {
-        validate(hash !== undefined, InvalidDataReason.INVALID_HASH);
-        validate(offline_url !== undefined, InvalidDataReason.INVALID_OFFLINE_URL);
-        varData = Buffer.concat([
-            Buffer.from("0001", "hex"), 
-            varuint32_to_buf(hash.length),
-            Buffer.from(hash),
-            Buffer.from("01", "hex"),
-            varuint32_to_buf(offline_url.length),
-            Buffer.from(offline_url),
-        ])
+function serializeOptionalString(str?: VarlenAsciiString): Buffer {
+    if (str === undefined) {
+        return Buffer.from("00", "hex")
     }
     else {
-        validate(hash === undefined, InvalidDataReason.INVALID_HASH);
-        validate(hash === undefined, InvalidDataReason.INVALID_OFFLINE_URL);
-        varData = Buffer.concat([
+        return Buffer.concat([
             Buffer.from("01", "hex"), 
-            varuint32_to_buf(memo.length),
-            Buffer.from(memo),
-            Buffer.from("0000", "hex"),
+            varuint32_to_buf(str.length),
+            Buffer.from(str),
         ])
     }
+}
+
+export function COMMAND_APPEND_DATA_MEMO_HASH(memo?: VarlenAsciiString, hash?: VarlenAsciiString, offline_url?: VarlenAsciiString): Command {
+    validate((hash !== undefined && offline_url !== undefined) || (hash === undefined && offline_url === undefined), InvalidDataReason.INVALID_HASH);
+            
+    const varData = Buffer.concat([
+        serializeOptionalString(memo),
+        serializeOptionalString(hash),
+        serializeOptionalString(offline_url),
+    ])
+
     return {
         ...defaultCommand,
         command: COMMAND.APPEND_DATA, 

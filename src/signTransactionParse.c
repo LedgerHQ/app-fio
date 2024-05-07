@@ -86,38 +86,37 @@ static void displayASCIIStringWithLength(const uint8_t *value,
     display[strLen] = 0;
 }
 
+// helper for displayMemoHash
+static bool validateOptional(const uint8_t *value, uint8_t valueLen, uint8_t *read) {
+    VALIDATE(valueLen >= *read + 1, ERR_INVALID_DATA);
+    uint8_t hasOptional = value[*read];
+    if (hasOptional) {
+        VALIDATE(hasOptional == 1, ERR_INVALID_DATA);
+        VALIDATE(valueLen >= *read + 2, ERR_INVALID_DATA);
+        uint8_t optionalLen = value[*read + 1];
+        VALIDATE(optionalLen < 127, ERR_INVALID_DATA);
+        *read += 2 + optionalLen;
+        return true;
+    } else {
+        *read += 1;
+        return false;
+    }
+}
+
 static void displayMemoHash(const uint8_t *value,
                             uint8_t valueLen,
                             char display[MAX_DISPLAY_VALUE_LENGTH]) {
     // data format:
     // hasMemo(0x00/0x01), if yes then memolength (1b, < 127) and memo
-    // then hash and offline url in the same manner
-    // Either memo is present, or both hash and offline url.
+    // hasHash(0x00/0x01), if yes then hashlength (1b, < 127) and hash
+    // hasOfflineUrl(0x00/0x01), if yes then offlineurllength (1b, < 127) and offlineurl
+    // hash and offline url have to be present at the same time.
     TRACE_BUFFER(value, valueLen);
-    VALIDATE(valueLen >= 1, ERR_INVALID_DATA);
-    if (value[0] == 1) {  // has memo
-        VALIDATE(valueLen >= 2,
-                 ERR_INVALID_DATA);  // this also checks that memo has length at least 1
-        size_t memoLen = value[1];
-        VALIDATE(memoLen < 127, ERR_INVALID_DATA);
-        VALIDATE(valueLen == memoLen + 4,
-                 ERR_INVALID_DATA);  // has memo, memo length, memo, no hash, no url
-        VALIDATE(value[2 + memoLen] == 0, ERR_INVALID_DATA);  // no hash
-        VALIDATE(value[3 + memoLen] == 0, ERR_INVALID_DATA);  // no offline_url
-    } else if (value[0] == 0) {                               // no memo
-        TRACE("No memo");
-        VALIDATE(valueLen >= 3, ERR_INVALID_DATA);
-        VALIDATE(value[1] == 1, ERR_INVALID_DATA);  // has hash
-        size_t hashLen = value[2];
-        VALIDATE(hashLen < 127, ERR_INVALID_DATA);
-        VALIDATE(valueLen >= hashLen + 5, ERR_INVALID_DATA);
-        VALIDATE(value[hashLen + 3] == 1, ERR_INVALID_DATA);  // has url
-        size_t urlLen = value[hashLen + 4];
-        VALIDATE(urlLen < 127, ERR_INVALID_DATA);
-        VALIDATE(valueLen == hashLen + urlLen + 5, ERR_INVALID_DATA);
-    } else {
-        VALIDATE(false, ERR_INVALID_DATA);
-    }
+    uint8_t read = 0;
+    bool hasMemo = validateOptional(value, valueLen, &read);
+    bool hasHash = validateOptional(value, valueLen, &read);
+    bool hasOfflineUrl = validateOptional(value, valueLen, &read);
+    VALIDATE((hasHash && hasOfflineUrl) || (!hasHash && !hasOfflineUrl), ERR_INVALID_DATA);
     // These data are not meant to e displayed at themoement
     snprintf(display, MAX_DISPLAY_VALUE_LENGTH, "NOT IMPLEMENTED");
 }
