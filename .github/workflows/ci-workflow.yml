@@ -3,6 +3,12 @@ name: Compilation & tests
 on: [workflow_dispatch, push, pull_request]
 
 jobs:
+  build_application:
+    name: Build application using the reusable workflow
+    uses: LedgerHQ/ledger-app-workflows/.github/workflows/reusable_build.yml@v1
+    with:
+      upload_app_binaries_artifact: "compiled_app_binaries"
+
   job_nanoS_build_debug:
     name: Build debug app for NanoS
     runs-on: ubuntu-latest
