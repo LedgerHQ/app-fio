@@ -155,7 +155,7 @@ endif
 #   Build    #
 ##############
 
-build: bin/app.elf
+build: all
 	@cp $(DBG_DIR)/app.asm debug/app.asm
 	@cp $(DBG_DIR)/app.map debug/app.map
 	@cp $(BIN_DIR)/app.hex bin/app.hex
