@@ -3,12 +3,18 @@ name: Compilation & tests
 on: [workflow_dispatch, push, pull_request]
 
 jobs:
+  build_application:
+    name: Build application using the reusable workflow
+    uses: LedgerHQ/ledger-app-workflows/.github/workflows/reusable_build.yml@v1
+    with:
+      upload_app_binaries_artifact: "compiled_app_binaries"
+
   job_nanoS_build_debug:
     name: Build debug app for NanoS
     runs-on: ubuntu-latest
 
     container:
-      image: ghcr.io/ledgerhq/ledger-app-builder/ledger-app-builder:d5bfe2e793f15a826971ae9de2adcad524df3e8e
+      image: ghcr.io/ledgerhq/ledger-app-builder/ledger-app-builder:3.19.0
 
     steps:
       - name: Clone
@@ -29,7 +35,7 @@ jobs:
     runs-on: ubuntu-latest
 
     container:
-      image: ghcr.io/ledgerhq/ledger-app-builder/ledger-app-builder:d5bfe2e793f15a826971ae9de2adcad524df3e8e
+      image: ghcr.io/ledgerhq/ledger-app-builder/ledger-app-builder:3.19.0
 
     steps:
       - name: Clone
@@ -50,7 +56,7 @@ jobs:
     runs-on: ubuntu-latest
 
     container:
-      image: ghcr.io/ledgerhq/ledger-app-builder/ledger-app-builder:d5bfe2e793f15a826971ae9de2adcad524df3e8e
+      image: ghcr.io/ledgerhq/ledger-app-builder/ledger-app-builder:3.19.0
 
     steps:
       - name: Clone
@@ -72,7 +78,7 @@ jobs:
     needs: job_nanoS_build_debug
 
     container:
-      image: ghcr.io/ledgerhq/ledger-app-builder/ledger-app-builder:d5bfe2e793f15a826971ae9de2adcad524df3e8e
+      image: ghcr.io/ledgerhq/ledger-app-builder/ledger-app-builder:3.19.0
 
     steps:
       - uses: actions/checkout@v2

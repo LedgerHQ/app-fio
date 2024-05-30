@@ -3,13 +3,13 @@ import { syncBackTicks, sleep, humanTime } from "./speculos-common.js"
 const fioWaitingForCommandsSHA = {
     "nanos": "sha256:13bd32a0f8a2eb3d5723b7e131e439105d63875272e952f703a268a0f1e00728",
     "nanox": "sha256:ce937171040b94097e5d805f76eda47fe8eeb41e50215706634939417214544c",
-    "nanosp": "sha256:86fa19f6aa42fb59d1058cc245e95132629b88adb42efea49af289ddeb651405",
+    "nanosp": "sha256:ce937171040b94097e5d805f76eda47fe8eeb41e50215706634939417214544c",
 } 
 
 const fioWarningDevelSHA = {
     "nanos": "sha256:df7553b0b614d9d3ff0dcb5facde9e1e7e308e2691be9669d206a241f958a999",
-    "nanox": "sha256:2bb665c41bcb7e7abda8fc30255f28b35144d26997f314074290eb24b23e37fa", 
-    "nanosp": "sha256:2bb665c41bcb7e7abda8fc30255f28b35144d26997f314074290eb24b23e37fa",
+    "nanox": "sha256:bc21ced95ca0a8fcea97428b4a840c35db373ed2b6c67654b5de66b330e466f9", 
+    "nanosp": "sha256:bc21ced95ca0a8fcea97428b4a840c35db373ed2b6c67654b5de66b330e466f9",
 } 
 
 const fioThreeDotsSHA = {
@@ -167,7 +167,7 @@ class ButtonsAndSnapshots {
     //Each step should end on "FIO Ready" screen
     checkFioReadyScreen(sha) {
 		if (sha != this.fioWaitingSHA && sha != this.fioWarningSHA) {
-			throw new Error();
+    		throw new Error();
 		}
 	}
 

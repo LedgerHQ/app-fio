@@ -71,9 +71,19 @@ const content5 = {
     amount: "Amount 100",
     chain_code: "BTC1",
     token_code: "BTC2",
+    memo: undefined,
+    hash: undefined,
+    offline_url: undefined,
+}
+
+const content6 = {
+    payee_public_address: "Payee public address",
+    amount: "Amount 100",
+    chain_code: "BTC1",
+    token_code: "BTC2",
     memo: "My memo",
     hash: "My hash",
-    offline_url: "Offline URL",
+    offline_url: undefined,
 }
 
 const path = [44 + HARDENED, 235 + HARDENED, 0 + HARDENED, 0, 0]
@@ -91,6 +101,7 @@ const encryptedContent2 = sharedCipher.encrypt('new_funds_content', content2)
 const encryptedContent3 = sharedCipher.encrypt('record_obt_data_content', content3)
 const encryptedContent4 = sharedCipher.encrypt('record_obt_data_content', content4)
 const encryptedContent5 = sharedCipher.encrypt('new_funds_content', content5)
+const encryptedContent6 = sharedCipher.encrypt('new_funds_content', content6)
 
 testStep(" - - -", "await app.decodeMessage() - newfundsreq memo");
 {
@@ -105,7 +116,7 @@ testStep(" - - -", "await app.decodeMessage() - newfundsreq hash");
 {
     const decodeMessagePromise = app.decodeMessage({path: path, publicKeyHex: otherPublicKey.toUncompressed().toBuffer().toString("hex"), 
                                                     message: encryptedContent2, context: "newfundsreq"});
-    await device.review([1, 1, 1, 1, 1, 1, 1, 1], "Review decode message");
+    await device.review([1, 1, 1, 1, 1, 1], "Review decode message");
     const decodeMessageResponse = await decodeMessagePromise;
     assert.equal(decodeMessageResponse.message.toString("hex"), "145061796565207075626c696320616464726573730a416d6f756e7420313030044254433104425443320001074d792068617368010b4f66666c696e652055524c")    
 }
@@ -124,15 +135,24 @@ testStep(" - - -", "await app.decodeMessage() - recordobt hash");
     console.log(encryptedContent4)
     const decodeMessagePromise = app.decodeMessage({path: path, publicKeyHex: otherPublicKey.toUncompressed().toBuffer().toString("hex"), 
                                                     message: encryptedContent4, context: "recordobt"});
-    await device.review([1, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1], "Review decode message");
+    await device.review([1, 2, 1, 1, 1, 1, 1, 1, 1], "Review decode message");
     const decodeMessageResponse = await decodeMessagePromise;
     assert.equal(decodeMessageResponse.message.toString("hex"), "2d5061796572207075626c696320616464726573732069732076657279206c6f6e672c206c6f6e672c206c6f6e672d5061796565207075626c696320616464726573732069732076657279206c6f6e672c206c6f6e672c206c6f6e670a416d6f756e74203130300442544331044254433206537461747573064f62742049440001234d792068617368206973207175697465206c6f6e6720746f6f2c20746f6f2c20746f6f01224f66666c696e652055524c206973207175697465206c6f6e6720746f6f2c20746f6f")    
 }
 
-testStep(" - - -", "await app.decodeMessage() - newfundsreq invalid both memo and hash");
+testStep(" - - -", "await app.decodeMessage() - newfundsreq no memo no hash no offline url");
 {
     const decodeMessagePromise = app.decodeMessage({path: path, publicKeyHex: otherPublicKey.toUncompressed().toBuffer().toString("hex"), 
                                                     message: encryptedContent5, context: "newfundsreq"});
+    await device.review([1, 1, 1, 1, 1, 1], "Review decode message");
+    const decodeMessageResponse = await decodeMessagePromise;
+    assert.equal(decodeMessageResponse.message.toString("hex"), "145061796565207075626c696320616464726573730a416d6f756e742031303004425443310442544332000000")    
+}
+
+testStep(" - - -", "await app.decodeMessage() - newfundsreq invalid hash defined offlineurl undefined");
+{
+    const decodeMessagePromise = app.decodeMessage({path: path, publicKeyHex: otherPublicKey.toUncompressed().toBuffer().toString("hex"), 
+                                                    message: encryptedContent6, context: "newfundsreq"});
     await assert.rejects(decodeMessagePromise, DeviceStatusError); 
 }
 
