@@ -28,37 +28,37 @@ NANOS_ID = 1
 WORDS = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
 PIN = 5555
 
-SPECULOS_MODEL_SWITCH=nanos
 NANO_ICON_GIF=icon_fio_nanos.gif
 BOLOS_SDK_DIRECTORY=/opt/nanos-secure-sdk
+BUILD_DEVICE=nanos
 TARGET_NAME=TARGET_NANOS
 TEST_DEVICE=nanos
 SPECULOS_SDK_STRING= --sdk 2.1
 ifeq ($(TARGET_DEVICE), NANO_X)
     $(info Targeting NanoX)
-    SPECULOS_MODEL_SWITCH=nanox
     NANO_ICON_GIF=icon_fio_nanox.gif
     BOLOS_SDK_DIRECTORY=/opt/nanox-secure-sdk
     TARGET_NAME=TARGET_NANOX
+    BUILD_DEVICE=nanox
     TEST_DEVICE=nanox
     SPECULOS_SDK_STRING=
 endif
 ifeq ($(TARGET_DEVICE), NANO_SP)
     $(info Targeting NanoSPlus)
-    SPECULOS_MODEL_SWITCH=nanosp
     NANO_ICON_GIF=icon_fio_nanox.gif
     BOLOS_SDK_DIRECTORY=/opt/nanosplus-secure-sdk
     TARGET_NAME=TARGET_NANOS2
+    BUILD_DEVICE=nanos2
     TEST_DEVICE=nanosp
     SPECULOS_SDK_STRING=
 endif
 
 ifeq ($(TARGET_DEVICE), STAX)
     $(info Targeting STAX)
-    SPECULOS_MODEL_SWITCH=stax
     NANO_ICON_GIF=icon_fio_stax.png
     BOLOS_SDK_DIRECTORY=/opt/stax-secure-sdk
     TARGET_NAME=TARGET_STAX
+    BUILD_DEVICE=stax
     TEST_DEVICE=stax
     SPECULOS_SDK_STRING=
 endif
