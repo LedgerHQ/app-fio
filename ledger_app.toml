@@ -3,3 +3,6 @@ build_directory = "./"
 sdk = "C"
 devices = ["nanos", "nanox", "nanos+"]
 
+[use_cases]
+devel = "DEVEL=1"
+

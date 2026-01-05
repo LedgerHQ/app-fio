@@ -21,10 +21,16 @@ test-yarn:
 	
 TESTS_SPECULOS_DIR=test-integration
 
+ifdef GOLDEN_RUN
+SNAPSHOTS_COMMAND = TEST_PNG_RE_GEN_FOR=snapshots/$(basename $(3))
+else
+SNAPSHOTS_COMMAND =
+endif
+
 define run_nodejs_test
 	@cd $(TESTS_SPECULOS_DIR) \
 	&& { { { \
-          TEST_SPECULOS_API_PORT=$(1) TEST_SPECULOS_APDU_PORT=$(2) TEST_DEVICE=$(TEST_DEVICE) \
+          $(SNAPSHOTS_COMMAND) TEST_SPECULOS_API_PORT=$(1) TEST_SPECULOS_APDU_PORT=$(2) TEST_DEVICE=$(TEST_DEVICE) \
           APPVERSION_M=$(APPVERSION_M) APPVERSION_N=$(APPVERSION_N) APPVERSION_P=$(APPVERSION_P) \
           node $(3) 2>&1; echo $$? >&3; \
         } | tee -a ../speculos-port-$(1).log >&4; } 3>&1 | { read xs; exit $$xs; } } 4>&1
@@ -33,7 +39,7 @@ endef
 .PHONY: speculos_port_5001_test_internal
 speculos_port_5001_test_internal:
 	$(call run_announce,$@)
-#	$(call run_nodejs_test,5001,40001,getVersion.js)
+	$(call run_nodejs_test,5001,40001,getVersion.js)
 	$(call run_nodejs_test,5001,40001,getSerial.js)
 	$(call run_nodejs_test,5001,40001,getPublicKey.js)
 	$(call run_nodejs_test,5001,40001,decodeMessage.js)
@@ -44,11 +50,11 @@ speculos_port_5001_test_internal:
 	$(call run_nodejs_test,5001,40001,signTransactionRemaddress.js)
 	$(call run_nodejs_test,5001,40001,signTransactionAddnft.js)
 	$(call run_nodejs_test,5001,40001,signTransactionRemnft.js)
-	$(call run_nodejs_test,5001,40001,signTransactionOtherFioAddress.js)	
-	$(call run_nodejs_test,5001,40001,signTransactionOtherFioReqobt.js)	
-	$(call run_nodejs_test,5001,40001,signTransactionOtherFioStaking.js)	
-	$(call run_nodejs_test,5001,40001,signTransactionOtherEosio.js)	
-	$(call run_nodejs_test,5001,40001,signTransactionOtherFioOracle.js)	
+	$(call run_nodejs_test,5001,40001,signTransactionOtherFioAddress.js)
+	$(call run_nodejs_test,5001,40001,signTransactionOtherFioReqobt.js)
+	$(call run_nodejs_test,5001,40001,signTransactionOtherFioStaking.js)
+	$(call run_nodejs_test,5001,40001,signTransactionOtherEosio.js)
+	$(call run_nodejs_test,5001,40001,signTransactionOtherFioOracle.js)
 	@echo "# ALL TESTS COMPLETED!" | tee -a speculos-port-5001.log
 
 .PHONY: speculos_port_5001_unit_test_internal

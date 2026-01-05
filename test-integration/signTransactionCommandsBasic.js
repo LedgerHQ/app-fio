@@ -64,8 +64,15 @@ testStep(" - - -", "Sign minimal fake devel transaction containing INIT, APPEND_
     const buffer14 = getAPDUDataBuffer("", "");
     const promise14 = transport.send(215, 0x20, 0x10, 0, buffer14);
     await device.curlScreenShot();
-    await device.curlButtonAndScreenshot("both", "Confirm sign with");
-    await device.curlButtonAndScreenshot("right", "Confirm sign with");
+    if (speculosConf.deviceType == "nanos") {
+        await device.curlButtonAndScreenshot("both", "Confirm sign with");
+        await device.curlButtonAndScreenshot("right", "Confirm sign with");
+    } else {
+        // NanoX and NanoSP: scroll, then two both presses to validate
+        await device.curlButtonAndScreenshot("right", "Scroll sign with address");
+        await device.curlButtonAndScreenshot("both", "Show validation screen");
+        await device.curlButtonAndScreenshot("both", "Final validate");
+    }
     const response14 = await promise14;
 
     //The signed message should contain chainId + 0102030405
@@ -105,8 +112,15 @@ testStep(" - - -", "Sign minimal fake devel transaction containing INIT, APPEND_
     const buffer14 = getAPDUDataBuffer("", "");
     const promise14 = transport.send(215, 0x20, 0x10, 0, buffer14);
     await device.curlScreenShot();
-    await device.curlButtonAndScreenshot("both", "Confirm sign with");
-    await device.curlButtonAndScreenshot("right", "Confirm sign with");
+    if (speculosConf.deviceType == "nanos") {
+        await device.curlButtonAndScreenshot("both", "Confirm sign with");
+        await device.curlButtonAndScreenshot("right", "Confirm sign with");
+    } else {
+        // NanoX and NanoSP: scroll, then two both presses to validate
+        await device.curlButtonAndScreenshot("right", "Scroll sign with address");
+        await device.curlButtonAndScreenshot("both", "Show validation screen");
+        await device.curlButtonAndScreenshot("both", "Final validate");
+    }
     const response14 = await promise14;
 
     //The signed message should contain chainId + 0102030405

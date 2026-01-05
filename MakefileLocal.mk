@@ -156,9 +156,6 @@ endif
 ##############
 
 build: all
-	@cp $(DBG_DIR)/app.asm debug/app.asm
-	@cp $(DBG_DIR)/app.map debug/app.map
-	@cp $(BIN_DIR)/app.hex bin/app.hex
 	@mkdir -p pkg
 	@echo "#!/usr/bin/env bash" > $(CURDIR)/pkg/loadingtool.sh
 	@echo "APPNAME=\"${APPNAME}\"" >> $(CURDIR)/pkg/loadingtool.sh
@@ -167,7 +164,7 @@ build: all
 	@echo "LOAD_PARAMS=\"${COMMON_LOAD_PARAMS}\"" >> $(CURDIR)/pkg/loadingtool.sh
 	@echo "DELETE_PARAMS=\"${COMMON_DELETE_PARAMS}\"" >> $(CURDIR)/pkg/loadingtool.sh
 	@echo "APPHEX=\"" >> $(CURDIR)/pkg/loadingtool.sh
-	@cat $(CURDIR)/bin/app.hex >> $(CURDIR)/pkg/loadingtool.sh
+	@cat $(BIN_DIR)/app.hex >> $(CURDIR)/pkg/loadingtool.sh
 	@echo "\"" >> $(CURDIR)/pkg/loadingtool.sh
 	@cat $(CURDIR)/submodules/template.sh >> $(CURDIR)/pkg/loadingtool.sh
 	@chmod +x $(CURDIR)/pkg/loadingtool.sh
@@ -192,6 +189,5 @@ format:
 #scan_build:
 #In sdk
 
-size: bin/app.elf
-	$(GCCPATH)arm-none-eabi-size --format=GNU bin/app.elf
-
+size: $(BIN_DIR)/app.elf
+	$(GCCPATH)arm-none-eabi-size --format=GNU $(BIN_DIR)/app.elf

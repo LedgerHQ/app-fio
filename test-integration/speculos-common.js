@@ -2,30 +2,10 @@ import { execSync  } from 'child_process';
 import assert from 'assert/strict';
 import { basename } from 'path';
 
-// see https://stackoverflow.com/questions/9763441/milliseconds-to-time-in-javascript
-function msToTime(s) {
-	// Pad to 2 or 3 digits, default is 2
-	function pad(n, z) {
-		z = z || 2;
-		return ('00' + n).slice(-z);
-	}
-
-	const ms = s % 1000;
-	s = (s - ms) / 1000;
-	const secs = s % 60;
-	s = (s - secs) / 60;
-	const mins = s % 60;
-	const hrs = (((s - mins) / 60) + 20) % 24;
-
-	return pad(hrs) + ':' + pad(mins) + ':' + pad(secs) + '.' + pad(ms, 3);
-}
-
-function msToMatchSpeculosContainer() {
-	return (4 * 3600 * 1000);
-}
-
 function humanTime() {
-	return msToTime(Date.now() + msToMatchSpeculosContainer());
+	const now = new Date();
+	const pad = (n, z = 2) => String(n).padStart(z, '0');
+	return pad(now.getHours()) + ':' + pad(now.getMinutes()) + ':' + pad(now.getSeconds()) + '.' + pad(now.getMilliseconds(), 3);
 }
 
 function syncBackTicks(command) {
