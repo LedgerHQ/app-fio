@@ -55,7 +55,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: speculos-ut-5001-${{ matrix.target_device }}-log
-          path: tests_speculos/speculos-port-5001.log
+          path: speculos-port-5001.log
 
   job_speculos_tests_5001:
     name: ${{ matrix.target_device }} Speculos 5001 tests
@@ -90,5 +90,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: speculos-5001-${{ matrix.target_device }}-log
-          path: tests_speculos/speculos-port-5001.log
+          path: speculos-port-5001.log
 
