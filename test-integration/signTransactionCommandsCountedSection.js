@@ -109,8 +109,15 @@ testStep(" - - -", "Sign minimal fake devel transaction cotaining COUNTED_SECTIO
     const buffer99 = getAPDUDataBuffer("", "");
     const promise99 = transport.send(215, 0x20, 0x10, 0, buffer99);
     await device.curlScreenShot();
-    await device.curlButtonAndScreenshot("both", "Confirm sign with");
-    await device.curlButtonAndScreenshot("right", "Confirm sign with");
+    if (speculosConf.deviceType == "nanos") {
+        await device.curlButtonAndScreenshot("both", "Confirm sign with");
+        await device.curlButtonAndScreenshot("right", "Confirm sign with");
+    } else {
+        // NanoX and NanoSP: scroll, then two both presses to validate
+        await device.curlButtonAndScreenshot("right", "Scroll sign with address");
+        await device.curlButtonAndScreenshot("both", "Show validation screen");
+        await device.curlButtonAndScreenshot("both", "Final validate");
+    }
     const response99 = await promise99;
 
     //The signed message should contain chainId + 0102030405

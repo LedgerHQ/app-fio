@@ -78,8 +78,15 @@ testStep(" - - -", "Sign transaction using storage");
     const buffer19 = getAPDUDataBuffer("", "");
     const promise19 = transport.send(215, 0x20, 0x10, 0, buffer19);
     await device.curlScreenShot();
-    await device.curlButtonAndScreenshot("both", "Confirm sign with");
-    await device.curlButtonAndScreenshot("right", "Confirm sign with");
+    if (speculosConf.deviceType == "nanos") {
+        await device.curlButtonAndScreenshot("both", "Confirm sign with");
+        await device.curlButtonAndScreenshot("right", "Confirm sign with");
+    } else {
+        // NanoX and NanoSP: scroll, then two both presses to validate
+        await device.curlButtonAndScreenshot("right", "Scroll sign with address");
+        await device.curlButtonAndScreenshot("both", "Show validation screen");
+        await device.curlButtonAndScreenshot("both", "Final validate");
+    }
     const response19 = await promise19;
 
     //The signed message should contain chainId + 0102030405
