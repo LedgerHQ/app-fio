@@ -78,7 +78,12 @@ testStep(" - - -", "Sign minimal devel DH tranaction");
     const buffer15 = getAPDUDataBuffer("", "");
     const promise15 = transport.send(215, 0x20, 0x09, 0, buffer15);
     await device.curlScreenShot();
-    device.curlButton("right", "Confirm create shared secret"); //!!!!!!
+    if (speculosConf.deviceType == "nanos") {
+        device.curlButton("right", "Confirm create shared secret");
+    } else {
+        // NanoX and NanoSP: both directly to confirm
+        device.curlButton("both", "Confirm create shared secret");
+    }
     const response15 = await promise15;
     assert.equal(response15.slice(-2).toString("hex"), "9000");
     dhEncodedMsg += response15.slice(0, -2).toString("hex");
@@ -95,8 +100,17 @@ testStep(" - - -", "Sign minimal devel DH tranaction");
     const buffer16 = getAPDUDataBuffer("", "");
     const promise16 = transport.send(215, 0x20, 0x10, 0, buffer16);
     await device.curlScreenShot();
-    await device.curlButtonAndScreenshot("both", "Our Path");
-    await device.curlButtonAndScreenshot("right", "Confirm sign with");
+    // await device.curlButtonAndScreenshot("both", "Our Path");
+    // await device.curlButtonAndScreenshot("right", "Confirm sign with");
+    if (speculosConf.deviceType == "nanos") {
+        await device.curlButtonAndScreenshot("both", "Our Path");
+        await device.curlButtonAndScreenshot("right", "Confirm sign with");
+    } else {
+        // NanoX and NanoSP: scroll, then two both presses to validate 
+        await device.curlButtonAndScreenshot("right", "Scroll sign with address");
+        await device.curlButtonAndScreenshot("both", "Show validation screen");
+        await device.curlButtonAndScreenshot("both", "Final validate");
+    }
     const response16 = await promise16;
 
     //The signed message should contain chainId + dhEncodedMsg
@@ -177,7 +191,12 @@ testStep(" - - -", "You can restart DH encryption. You cannot finish the transac
     const buffer13 = getAPDUDataBuffer("", "");
     const promise13 = transport.send(215, 0x20, 0x09, 0, buffer13);
     await device.curlScreenShot();
-    device.curlButton("right", "Confirm create shared secret"); //!!!!!!
+    if (speculosConf.deviceType == "nanos") {
+        device.curlButton("right", "Confirm create shared secret");
+    } else {
+        // NanoX and NanoSP: both directly to confirm
+        device.curlButton("both", "Confirm create shared secret");
+    }
     const response13 = await promise13;
     assert.equal(response13.slice(-2).toString("hex"), "9000");
 
@@ -221,7 +240,13 @@ testStep(" - - -", "If you reject DH encryption it fails imediately, without exp
     const buffer13 = getAPDUDataBuffer("", "");
     const promise13 = transport.send(215, 0x20, 0x09, 0, buffer13);
     await device.curlScreenShot();
-    device.curlButton("left", "Reject create shared secret"); //!!!!!!
+    if (speculosConf.deviceType == "nanos") {
+        device.curlButton("left", "Reject create shared secret");
+    } else {
+        // NanoX and NanoSP: right to scroll to reject screen, then both to confirm rejection
+        await device.curlButtonAndScreenshot("right", "Scroll to reject screen");
+        device.curlButton("both", "Reject create shared secret");
+    }
     await assert.rejects(promise13, err(0x6e09));
 
     await device.makeStartingScreenshot();

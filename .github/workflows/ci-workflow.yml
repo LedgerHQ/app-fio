@@ -1,6 +1,12 @@
 name: Compilation & tests
 
-on: [workflow_dispatch, push, pull_request]
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - master
+      - develop
+  pull_request:
 
 jobs:
   build_application:
@@ -9,106 +15,33 @@ jobs:
     with:
       upload_app_binaries_artifact: "compiled_app_binaries"
 
-  job_nanoS_build_debug:
-    name: Build debug app for NanoS
+  build_debug_application:
+    name: Build debug application using the reusable workflow
+    uses: LedgerHQ/ledger-app-workflows/.github/workflows/reusable_build.yml@v1
+    with:
+      upload_app_binaries_artifact: "compiled_dbg_app_binaries"
+      flags: "DEVEL=1"
+
+  job_speculos_unit_tests_5001:
+    name: ${{ matrix.target_device }} Speculos 5001 unit tests
+    needs: build_debug_application
     runs-on: ubuntu-latest
-
-    container:
-      image: ghcr.io/ledgerhq/ledger-app-builder/ledger-app-builder:3.19.0
-
+    strategy:
+      fail-fast: false
+      matrix:
+        target_device: ["NANO_X", "NANO_SP"]
     steps:
       - name: Clone
-        uses: actions/checkout@v2
-
-      - name: Build
-        run: |
-          make DEVEL=1
-
-      - name: Upload app binary NanoS
-        uses: actions/upload-artifact@v2
-        with:
-          name: fio-app-nanoS-debug
-          path: bin
-
-  job_nanoX_build_debug:
-    name: Build debug app for NanoX
-    runs-on: ubuntu-latest
-
-    container:
-      image: ghcr.io/ledgerhq/ledger-app-builder/ledger-app-builder:3.19.0
-
-    steps:
-      - name: Clone
-        uses: actions/checkout@v2
-
-      - name: Build
-        run: |
-          make DEVEL=1 BOLOS_SDK=$NANOX_SDK
-
-      - name: Upload app binary NanoX
-        uses: actions/upload-artifact@v2
-        with:
-          name: fio-app-nanoX-debug
-          path: bin
-
-  job_nanoSP_build_debug:
-    name: Build debug app for NanoSP
-    runs-on: ubuntu-latest
-
-    container:
-      image: ghcr.io/ledgerhq/ledger-app-builder/ledger-app-builder:3.19.0
-
-    steps:
-      - name: Clone
-        uses: actions/checkout@v2
-
-      - name: Build
-        run: |
-          make DEVEL=1 BOLOS_SDK=$NANOSP_SDK
-
-      - name: Upload app binary NanoSP
-        uses: actions/upload-artifact@v2
-        with:
-          name: fio-app-nanoSP-debug
-          path: bin
-
-  job_scan_build:
-    name: Clang Static Analyzer
-    runs-on: ubuntu-latest
-    needs: job_nanoS_build_debug
-
-    container:
-      image: ghcr.io/ledgerhq/ledger-app-builder/ledger-app-builder:3.19.0
-
-    steps:
-      - uses: actions/checkout@v2
-
-      - name: Build with Clang Static Analyzer
-        run: |
-          make clean
-          scan-build --use-cc=clang -analyze-headers -enable-checker security -enable-checker unix -enable-checker valist -o scan-build --status-bugs make default
-      - uses: actions/upload-artifact@v2
-        if: failure()
-        with:
-          name: scan-build
-          path: scan-build
-          
-  job_speculos_nanos_unit_tests_5001:
-    name: NanoS Speculos 5001 unit tests
-    needs: job_nanoS_build_debug
-    runs-on: ubuntu-latest  
-    steps:
-      - name: Clone
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
       - name: Setup node
         uses: actions/setup-node@v3
         with:
           node-version: 16.10.0
       - name: Download app binary
-        uses: actions/download-artifact@v2
+        uses: actions/download-artifact@v4
         with:
-          name: fio-app-nanoS-debug
-          path: bin
+          name: compiled_dbg_app_binaries
+          path: build
 
       - name: install speculos
         run: |
@@ -117,28 +50,33 @@ jobs:
           make test-yarn
       - name: Run tests
         run: |
-          make speculos_port_5001_unit_test
-      - name: Upload Speculos 5001s log
-        uses: actions/upload-artifact@v2
+          TARGET_DEVICE=${{ matrix.target_device }} make speculos_port_5001_unit_test
+      - name: Upload Speculos 5001 log
+        uses: actions/upload-artifact@v4
         with:
-          name: speculos-ut-5001s-log
-          path: tests_speculos/speculos-port-5001.log
-  job_speculos_nanos_tests_5001:
-    name: NanoS Speculos 5001 tests
-    needs: job_nanoS_build_debug
-    runs-on: ubuntu-latest  
+          name: speculos-ut-5001-${{ matrix.target_device }}-log
+          path: speculos-port-5001.log
+
+  job_speculos_tests_5001:
+    name: ${{ matrix.target_device }} Speculos 5001 tests
+    needs: build_debug_application
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target_device: ["NANO_X", "NANO_SP"]
     steps:
       - name: Clone
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
       - name: Setup node
         uses: actions/setup-node@v3
         with:
           node-version: 16.10.0
       - name: Download app binary
-        uses: actions/download-artifact@v2
+        uses: actions/download-artifact@v4
         with:
-          name: fio-app-nanoS-debug
-          path: bin
+          name: compiled_dbg_app_binaries
+          path: build
 
       - name: install speculos
         run: |
@@ -147,70 +85,10 @@ jobs:
           make test-yarn
       - name: Run tests
         run: |
-          make speculos_port_5001_test
-      - name: Upload Speculos 5001s log
-        uses: actions/upload-artifact@v2
+          TARGET_DEVICE=${{ matrix.target_device }} make speculos_port_5001_test
+      - name: Upload Speculos 5001 log
+        uses: actions/upload-artifact@v4
         with:
-          name: speculos-5001s-log
-          path: tests_speculos/speculos-port-5001.log
-  job_speculos_nanox_tests_5001:
-    name: NanoX Speculos 5001 tests
-    needs: job_nanoX_build_debug
-    runs-on: ubuntu-latest  
-    steps:
-      - name: Clone
-        uses: actions/checkout@v2
-      - name: Setup node
-        uses: actions/setup-node@v3
-        with:
-          node-version: 16.10.0
-      - name: Download app binary
-        uses: actions/download-artifact@v2
-        with:
-          name: fio-app-nanoX-debug
-          path: bin
-
-      - name: install speculos
-        run: |
-          export BOLOS_SDK=
-          make js-yarn
-          make test-yarn
-      - name: Run tests
-        run: |
-          TARGET_DEVICE=NANO_X make speculos_port_5001_test
-      - name: Upload Speculos 5001s log
-        uses: actions/upload-artifact@v2
-        with:
-          name: speculos-5001x-log
-          path: tests_speculos/speculos-port-5001.log
-  job_speculos_nanosp_tests_5001:
-    name: NanoS+ Speculos 5001 tests
-    needs: job_nanoSP_build_debug
-    runs-on: ubuntu-latest  
-    steps:
-      - name: Clone
-        uses: actions/checkout@v2
-      - name: Setup node
-        uses: actions/setup-node@v3
-        with:
-          node-version: 16.10.0
-      - name: Download app binary
-        uses: actions/download-artifact@v2
-        with:
-          name: fio-app-nanoSP-debug
-          path: bin
-
-      - name: install speculos
-        run: |
-          export BOLOS_SDK=
-          make js-yarn
-          make test-yarn
-      - name: Run tests
-        run: |
-          TARGET_DEVICE=NANO_SP make speculos_port_5001_test
-      - name: Upload Speculos 5001sp log
-        uses: actions/upload-artifact@v2
-        with:
-          name: speculos-5001sp-log
-          path: tests_speculos/speculos-port-5001.log
+          name: speculos-5001-${{ matrix.target_device }}-log
+          path: speculos-port-5001.log
 

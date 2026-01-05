@@ -82,7 +82,7 @@
 // stack memory consumption because the compiler might allocate the space
 // for all the local variables at the beginning of a function call.
 // but even then it can give you at least a rough idea.
-// The output of 'arm-none-eabi-objdump -d -S bin/app.elf'
+// The output of 'arm-none-eabi-objdump -d -S build/<target>/bin/app.elf'
 // gives more accurate info on the stack frames of individual function calls.
 // (Watch for lines like 'sub sp, #508' close to function headers.)
 

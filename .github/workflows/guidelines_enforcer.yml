@@ -11,6 +11,9 @@ name: Ensure compliance with Ledger guidelines
 on:
   workflow_dispatch:
   push:
+    branches:
+      - master
+      - develop
   pull_request:
 
 jobs:
