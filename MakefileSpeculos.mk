@@ -18,7 +18,7 @@
 CONTAINER_FULL_NAME = ghcr.io/ledgerhq/ledger-app-builder/ledger-app-dev-tools:latest
 	
 define run_announce
-	@perl -e 'use Time::HiRes; use POSIX; $$ts = sprintf qq[%f], Time::HiRes::time(); ($$f) = $$ts =~ m~(\....)~; printf qq[%s%s %s make: %s\n], POSIX::strftime("%H:%M:%S", gmtime), $$f, q[-] x 126, $$ARGV[0];' "$(1)"
+	@perl -e 'use Time::HiRes; use POSIX; $$ts = sprintf qq[%f], Time::HiRes::time(); ($$f) = $$ts =~ m~(\....)~; printf qq[%s%s %s make: %s\n], POSIX::strftime("%H:%M:%S", localtime), $$f, q[-] x 126, $$ARGV[0];' "$(1)"
 endef
 
 ifdef NO_PULL
